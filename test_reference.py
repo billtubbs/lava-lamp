@@ -1,9 +1,9 @@
-"""Check the CasADi functions against a direct loop translation of the JS.
+"""Check the vectorised NumPy step against a direct loop translation of the JS.
 
 The reference below follows ``updateParticles``/``applyBorderForce`` line by
 line, but reads every neighbour from the start-of-step state (Jacobi order),
-which is the semantics of the CasADi port.  All pairs are checked (no
-neighbour list), so this also validates the KD-tree padding.
+which is the semantics of the port.  All pairs are checked (no neighbour
+list), so this also validates the KD-tree pair search.
 """
 import math
 import sys
@@ -141,7 +141,7 @@ def main():
     S[0, 40:60] = rng.uniform(0, 400, 20)
     P = L.LavaParams(st_ratio=3.0, visc_wax=0.4)
 
-    sim = L.LavaLampSim(state=S.copy(), params=P, k_max=n)   # no truncation
+    sim = L.LavaLampSim(state=S.copy(), params=P)
     worst = 0.0
     S_ref = S.copy()
     for k in range(5):
@@ -149,7 +149,7 @@ def main():
         sim.step()
         err = np.max(np.abs(sim.state - S_ref))
         worst = max(worst, err)
-        print(f"step {k + 1}: max |casadi - reference| = {err:.3e}")
+        print(f"step {k + 1}: max |numpy - reference| = {err:.3e}")
     ok = worst < 1e-9
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lava-lamp-sph"
+version = "0.1.0"
+description = "NumPy/SciPy port of the physics of a browser SPH lava lamp simulator"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Bill Tubbs" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+demo = [
+    "matplotlib>=3.7",
+    "pillow>=9.0",
+]
+
+[project.urls]
+"Original simulator" = "https://lava-lamp-simulation.web.app/"
+"Reddit post" = "https://www.reddit.com/r/Simulated/comments/1t11plc/oc_lava_lamp_simulation_using_sph_fluid_dynamics/"
+
+[tool.setuptools]
+py-modules = ["lava_lamp_sph"]

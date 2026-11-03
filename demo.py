@@ -1,6 +1,10 @@
-"""Run the CasADi lava lamp and render frames like the original WebGL shader.
+"""Run the lava lamp simulation and render frames like the original WebGL shader.
 
-Usage:  python demo.py [--frames 6000] [--every 20] [--jit] [--gif out.gif]
+The simulator, physics and shader design are from the original by the author
+of the r/Simulated post "[OC] Lava lamp simulation using SPH fluid dynamics":
+https://www.reddit.com/r/Simulated/comments/1t11plc/oc_lava_lamp_simulation_using_sph_fluid_dynamics/
+
+Usage:  python demo.py [--frames 6000] [--every 20] [--gif out.gif]
 """
 import argparse
 import time
@@ -74,14 +78,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=6000)
     ap.add_argument("--every", type=int, default=20)
-    ap.add_argument("--jit", action="store_true")
     ap.add_argument("--gif", default="lava_lamp.gif")
     ap.add_argument("--png", default="lava_lamp_frames.png")
     args = ap.parse_args()
 
-    t0 = time.perf_counter()
-    sim = L.LavaLampSim(n_particles=3000, jit=args.jit, seed=0)
-    print(f"build: {time.perf_counter() - t0:.1f} s")
+    sim = L.LavaLampSim(n_particles=3000, seed=0)
     ren = Renderer(sim, scale=0.75)
 
     frames, stats = [], []
@@ -96,10 +97,10 @@ def main():
             frames.append(ren.image())
             wax = sim.is_wax
             stats.append((f, sim.state[1, wax].mean(), sim.temperature()[wax].mean(),
-                          np.abs(sim.state[2:4]).max(), sim.truncated))
+                          np.abs(sim.state[2:4]).max()))
         if f % 1000 == 0:
             print(f"frame {f}: wax mean y={stats[-1][1]:.0f}, mean T={stats[-1][2]:.2f}, "
-                  f"truncated={sim.truncated}, {1e3 * t_sim / (f + 1):.1f} ms/step")
+                  f"{1e3 * t_sim / (f + 1):.1f} ms/step")
     print(f"average {1e3 * t_sim / args.frames:.1f} ms/step over {args.frames} steps")
 
     # contact sheet
