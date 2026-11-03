@@ -19,6 +19,7 @@ demo = [
     "matplotlib>=3.7",
     "pillow>=9.0",
 ]
+fast = ["numba>=0.59"]
 test = ["pytest>=8.0"]
 
 [project.urls]

@@ -11,7 +11,7 @@ Modes:
 
     python play_lava_lamp.py                    # run on the display (Pi)
     python play_lava_lamp.py --benchmark        # time it, no display needed
-    python play_lava_lamp.py --preview out.gif  # render a GIF (needs matplotlib)
+    python play_lava_lamp.py --preview          # render preview.gif (needs matplotlib)
 
 Only the default mode needs the hardware. The others use display1593 only for
 the LED positions, so they run on a desktop.
@@ -23,6 +23,7 @@ aren't ready in time are logged as late (``play_lava_lamp.log``).
 
 import argparse
 import logging
+import os
 import time
 
 import numpy as np
@@ -30,6 +31,30 @@ from display1593.data.ledArray_data_1593 import centres_x, centres_y
 
 from lava_lamp import sph
 from lava_lamp.render import PointRenderer, to_led_values
+
+try:
+    import numba
+except ImportError:
+    numba = None
+
+# Colours (hex RRGGBB). The original's water is 19a5cc; on the LEDs a black
+# background (LEDs off) looks better (Bill's choice). The original's wax
+# gradient (b47d28 to b44b28) only changes green by 50/255, which can't be
+# seen on the LEDs. The default wax colours, cold to hot and evenly spaced,
+# are red, orange and yellow, sampled from a photo of a classic lava lamp
+# (whose liquid is purple, about 9b46a5).
+WATER_COLOUR = "000000"
+WAX_COLOURS = ("e63c32", "f59632", "ffd728")
+# Wax temperature (0 = cold, 1 = the heater's maximum) that gets the full hot
+# colour. Averaged over the wax around each LED, the wax spans about 0.01-0.40
+# (1st-99th percentile; median 0.12, 90th percentile 0.27), so 0.3 uses
+# nearly the whole gradient.
+HOT_TEMP = 0.3
+# Ambient cooling of the wax. The original's 0.25 suits its taller lamp; in
+# the shorter square, hot wax reaches the top before it has cooled, and 43%
+# of the wax ends up in the top third. At 0.5 that's 23%, with 69% in the
+# bottom third (measured over 27,000 steps).
+COOLING = 0.5
 
 LOG_PATH = "play_lava_lamp.log"
 DISPLAY_SIZE = 2000.0  # LED centres are in [0, 2000] x [0, 2000]
@@ -43,8 +68,10 @@ class LavaLampLeds:
 
     def __init__(self, size=200.0, n_particles=None, wax_ratio=0.2,
                  params=None, steps_per_frame=4, brightness=0.125, gamma=2.2,
-                 seed=None):
+                 seed=None, backend="numba", water_colour=WATER_COLOUR,
+                 wax_colours=WAX_COLOURS, hot_temp=HOT_TEMP):
         self.size = size
+        self.backend = backend
         if n_particles is None:
             n_particles = int(round(sph.LAMP_DENSITY * size * size))
         self.n_particles, self.wax_ratio, self.seed = n_particles, wax_ratio, seed
@@ -52,14 +79,21 @@ class LavaLampLeds:
         self.steps_per_frame = steps_per_frame
         self.brightness, self.gamma = brightness, gamma
         self.leds = np.c_[centres_x, centres_y] * (size / DISPLAY_SIZE)
-        self.renderer = PointRenderer(self.leds, size, size)
+        colours = [parse_colour(c) for c in wax_colours]
+        stops = [(k / max(len(colours) - 1, 1), c) for k, c in enumerate(colours)]
+        self.renderer = PointRenderer(
+            self.leds, size, size, cell="numba" if backend == "numba" else 4.0,
+            water_rgb=parse_colour(water_colour) / 255,
+            wax_stops=stops,
+            wax_only_temp=True, temp_scale=1 / hot_temp)
         self.reset()
 
     def reset(self):
         self.sim = sph.LavaLampSim(
             n_particles=self.n_particles, wax_ratio=self.wax_ratio,
             params=self.params, width=self.size, height=self.size,
-            polygon=sph.square_polygon(self.size), seed=self.seed)
+            polygon=sph.square_polygon(self.size), seed=self.seed,
+            backend=self.backend)
 
     def advance(self):
         """Step the simulation; resets it if the state is no longer finite."""
@@ -129,6 +163,21 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
         logger.info(summary)
 
 
+def parse_colour(text):
+    """'RRGGBB', '#RRGGBB' or 'R,G,B' (0-255) to an array of 3 floats."""
+    text = str(text).strip()
+    if "," in text:
+        rgb = [float(v) for v in text.split(",")]
+    else:
+        h = text.lstrip("#")
+        if len(h) != 6:
+            raise ValueError(f"expected RRGGBB or R,G,B, got {text!r}")
+        rgb = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+    if len(rgb) != 3 or not all(0 <= v <= 255 for v in rgb):
+        raise ValueError(f"expected 3 values from 0 to 255, got {text!r}")
+    return np.array(rgb, dtype=float)
+
+
 class LateFrameCounter(logging.Handler):
     """Counts the display driver's warnings (e.g. late frames)."""
 
@@ -153,8 +202,10 @@ def report(compute, show_slack, n_late, period):
 
 def benchmark(lamp, n_frames=100, fps=10.0):
     """Time the simulation and rendering per frame (no display needed)."""
-    lamp.advance()  # warm up
+    t0 = time.perf_counter()
+    lamp.advance()  # warm up (and compile, with numba)
     lamp.led_values()
+    print(f"first frame: {time.perf_counter() - t0:.1f} s")
     t_step, t_render = [], []
     for _ in range(n_frames):
         t0 = time.perf_counter()
@@ -167,7 +218,9 @@ def benchmark(lamp, n_frames=100, fps=10.0):
     step_ms = 1000 * np.mean(t_step)
     render_ms = 1000 * np.mean(t_render)
     total = step_ms + render_ms
-    print(f"{lamp.n_particles} particles, {lamp.size:g} px square, "
+    threads = f", {numba.get_num_threads()} threads" if lamp.backend == "numba" else ""
+    print(f"{lamp.backend}{threads}: "
+          f"{lamp.n_particles} particles, {lamp.size:g} px square, "
           f"{lamp.steps_per_frame} steps/frame, {n_frames} frames")
     print(f"  simulation: {step_ms:6.1f} ms/frame "
           f"({step_ms / lamp.steps_per_frame:.1f} ms/step)")
@@ -179,6 +232,8 @@ def benchmark(lamp, n_frames=100, fps=10.0):
 
 def preview(lamp, path, n_frames=300, fps=10.0):
     """Save a GIF of the LED colours, drawn at the LED positions."""
+    if not os.path.splitext(path)[1]:
+        path += ".gif"
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -230,20 +285,48 @@ def parse_args():
                     help="heat transfer rate (the original's slider, default 1)")
     ap.add_argument("--surface-tension", type=float, default=2.5,
                     help="the original's slider (default 2.5)")
+    ap.add_argument("--cooling", type=float, default=COOLING,
+                    help="ambient cooling rate of the wax (default "
+                    f"{COOLING:g}; the original's is 0.25). Higher: more wax "
+                    "pools at the bottom, less collects at the top")
+    ap.add_argument("--water-colour", default=WATER_COLOUR,
+                    help=f"background colour, RRGGBB or R,G,B (default "
+                    f"{WATER_COLOUR}, i.e. off; the original's is 19a5cc, a "
+                    "classic purple lava lamp's about 9b46a5)")
+    ap.add_argument("--wax-colours", nargs="+", default=list(WAX_COLOURS),
+                    metavar="COLOUR",
+                    help="wax colours from cold to hot, evenly spaced over "
+                    "the temperature range (default: "
+                    f"{' '.join(WAX_COLOURS)}, red, orange, yellow). One "
+                    "colour gives wax of a single colour")
+    ap.add_argument("--hot-temp", type=float, default=HOT_TEMP,
+                    help="wax temperature (0-1) that gets the full hot colour "
+                    f"(default {HOT_TEMP:g}; most wax is between 0 and 0.4). "
+                    "Lower: more of the wax looks hot")
     ap.add_argument("--brightness", type=float, default=0.125,
                     help="output scale after gamma correction, 0-1 "
                     "(default 0.125, the same as display1593's show_image; tune by eye)")
     ap.add_argument("--gamma", type=float, default=2.2,
                     help="gamma correction for the LEDs' response (default 2.2)")
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--backend", choices=("numba", "numpy"),
+                    default="numba" if numba is not None else "numpy",
+                    help="numba (default if installed; compiled, parallel) or "
+                    "numpy. Numba compiles on the first run (can take a "
+                    "minute on the Pi) and caches the result")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="numba threads (default: all cores); try one less "
+                    "than the cores to leave one for the display's serial I/O")
     ap.add_argument("--sync", action="store_true",
                     help="use the driver's synchronous mode, not pipelined")
     ap.add_argument("--report-interval", type=float, default=60.0,
                     help="seconds between timing reports (default 60)")
     ap.add_argument("--benchmark", action="store_true",
                     help="time the simulation and rendering, no display")
-    ap.add_argument("--preview", metavar="GIF",
-                    help="save a GIF of the LED colours, no display")
+    ap.add_argument("--preview", nargs="?", const="preview.gif",
+                    metavar="FILE",
+                    help="save a GIF of the LED colours, no display (default "
+                    "file preview.gif)")
     ap.add_argument("--frames", type=int, default=None,
                     help="frames for --benchmark (100) or --preview (300)")
     return ap.parse_args()
@@ -251,12 +334,18 @@ def parse_args():
 
 def main():
     args = parse_args()
-    params = sph.LavaParams(temp_speed=args.heat, st_ratio=args.surface_tension)
+    if args.threads is not None and args.backend == "numba":
+        numba.set_num_threads(args.threads)
+    params = sph.LavaParams(temp_speed=args.heat, st_ratio=args.surface_tension,
+                            ambient_rate=args.cooling)
     lamp = LavaLampLeds(size=args.size, n_particles=args.n_particles,
                         wax_ratio=args.wax_ratio, params=params,
                         steps_per_frame=args.steps_per_frame,
                         brightness=args.brightness, gamma=args.gamma,
-                        seed=args.seed)
+                        seed=args.seed, backend=args.backend,
+                        water_colour=args.water_colour,
+                        wax_colours=args.wax_colours,
+                        hot_temp=args.hot_temp)
     if args.benchmark:
         benchmark(lamp, args.frames or 100, args.fps)
     elif args.preview:

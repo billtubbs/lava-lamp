@@ -29,24 +29,21 @@ if you only need the simulation (NumPy and SciPy).
 
 ### On the Raspberry Pi (display app)
 
-The display app also needs display1593 and its serial library sercommpy.
-Neither is on PyPI, so install them from local clones (editable, because
-display1593 reads its LED layout files from its source folder):
+The display app also needs display1593 and its serial library sercommpy,
+which are already installed on the Pi for the other display scripts. Install
+this package into the same (system) Python:
 
 ```sh
 git clone https://github.com/billtubbs/lava-lamp.git
 cd lava-lamp
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install -e . -e ~/code/display1593 -e ~/code/ser-comm-py
+pip install -e .
 python play_lava_lamp.py --benchmark   # timing only, no display
 python play_lava_lamp.py               # run on the display
 ```
 
-Adjust the paths to wherever display1593 and ser-comm-py are cloned on the Pi
-(`/home/pi/code/display1593` in display1593's README). `--system-site-packages`
-lets the venv reuse the NumPy, SciPy and Numba the display scripts already use
-with the system Python, rather than downloading or building them again.
+If pip refuses with an "externally-managed-environment" error, add
+`--break-system-packages`. The only dependencies are NumPy and SciPy, which
+are already installed, so this doesn't replace any system packages.
 
 ## Files
 
@@ -54,6 +51,10 @@ with the system Python, rather than downloading or building them again.
   the step functions). The package `lava_lamp` re-exports these names.
 - `tests/test_reference.py`: checks the vectorised step against a line-by-line
   translation of the JavaScript. Run `pytest`.
+- `src/lava_lamp/fast.py`: Numba versions of the step and the LED splat
+  (compiled, parallel, same results to rounding error). Used by
+  `play_lava_lamp.py` when Numba is installed (`--backend numba`), and by
+  `LavaLampSim(backend="numba")`.
 - `src/lava_lamp/render.py`: `PointRenderer` colours a set of points (the LED
   centres) from the particles, like the original's shaders.
 - `play_lava_lamp.py`: runs the simulation in a square on the LED display.

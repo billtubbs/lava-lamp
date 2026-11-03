@@ -1,2 +1,2 @@
-# Installs the lava_lamp package (editable) with the demo and test extras
--e .[demo,test]
+# Installs the lava_lamp package (editable) with the demo, fast and test extras
+-e .[demo,fast,test]

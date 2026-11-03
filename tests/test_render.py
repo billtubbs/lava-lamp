@@ -1,6 +1,7 @@
 """Tests for the point renderer and the square domain (no display needed)."""
 
 import numpy as np
+import pytest
 
 from lava_lamp import sph
 from lava_lamp.render import PointRenderer, to_led_values
@@ -43,3 +44,19 @@ def test_to_led_values():
     assert v.dtype == np.uint8
     assert v.tolist() == [[0, 128, 255]]
     assert to_led_values(rgb, brightness=0.5, gamma=2.0).tolist() == [[0, 32, 128]]
+
+
+def test_numba_matches_numpy():
+    pytest.importorskip("numba")
+    a = square_sim(300)
+    b = sph.LavaLampSim(state=a.state, width=SIZE, height=SIZE,
+                        polygon=sph.square_polygon(SIZE), backend="numba")
+    a.step(3)
+    b.step(3)
+    assert np.abs(a.state - b.state).max() < 1e-9
+    rng = np.random.default_rng(1)
+    points = rng.uniform(0, SIZE, (300, 2))
+    args = (a.positions, a.is_wax, a.temperature())
+    exact = PointRenderer(points, SIZE, SIZE, cell=None).rgb(*args)
+    fast = PointRenderer(points, SIZE, SIZE, cell="numba").rgb(*args)
+    assert np.abs(fast - exact).max() < 1e-9

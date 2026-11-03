@@ -338,6 +338,8 @@ class LavaLampSim:
     width, height, polygon : canvas size and lamp outline
     seed        : random seed for the initial jitter
     state       : optional initial (6, N) state instead of ``initial_state``
+    backend     : "numpy" (:func:`step`) or "numba" (:func:`lava_lamp.fast.step`,
+                  needs numba)
     """
 
     def __init__(
@@ -350,8 +352,16 @@ class LavaLampSim:
         polygon: np.ndarray | None = None,
         seed: int | None = None,
         state: np.ndarray | None = None,
+        backend: str = "numpy",
     ):
         self.params = params or LavaParams()
+        if backend == "numba":
+            from .fast import step as step_fn
+        elif backend == "numpy":
+            step_fn = step
+        else:
+            raise ValueError(f"unknown backend {backend!r}")
+        self.backend, self._step_fn = backend, step_fn
         self.width, self.height = width, height
         self.polygon = (
             lamp_polygon(width, height)
@@ -378,7 +388,7 @@ class LavaLampSim:
 
     def step(self, n_steps: int = 1) -> np.ndarray:
         for _ in range(n_steps):
-            self._s = step(
+            self._s = self._step_fn(
                 self._s, self.params, self.polygon, self.width, self.height
             )
             self.frame += 1

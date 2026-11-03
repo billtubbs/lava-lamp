@@ -70,6 +70,8 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   `--preview out.gif` run here; they use display1593 just for the LED centres
   (`display1593.data.ledArray_data_1593`). Bill pushes and clones on the Pi
   (Raspberry Pi Zero 2 W, 4 cores) to test on the hardware.
+  On the Pi it's installed into the system Python with `pip install -e .`
+  (no venv), alongside display1593.
 - Target: 10 fps. Each frame runs `--steps-per-frame` (default 4) simulation
   steps; the original runs ~60 steps/s.
 - Domain: a square `--size` px across (default 200) mapped to the display's
@@ -77,6 +79,28 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   Particle count defaults to the original lamp's density (`LAMP_DENSITY`,
   ~930 for 200 px). Smaller squares make bigger blobs relative to the display,
   which suits its low resolution (~40 x 40 LEDs; fine shapes don't render).
+- Colours are options (`--water-colour`, `--wax-colours` cold to hot, hex or
+  R,G,B). Background (water) is black (LEDs off) by default at Bill's request;
+  the original's is 19a5cc. Wax default red -> orange -> yellow (e63c32 f59632
+  ffd728), sampled from a classic purple (9b46a5) lava lamp photo Bill liked.
+- Wax colour is by **temperature** (Bill: more physically relevant). A
+  colour-by-height option (lamp lit from below, as in real lamps, where wax
+  colour doesn't actually vary) was tried and dropped at his request. Hot wax
+  rises, so the top blobs look hottest (yellow).
+- The original's wax gradient changed only green by 50/255 and was indexed by
+  2 x the all-particle average temperature, so on the LEDs no variation showed.
+  Now the temperature is averaged over wax particles only, and `--hot-temp`
+  (default 0.3) gets the full hot colour; wax at the LEDs spans ~0.01-0.40
+  (1st-99th percentile, median 0.12).
+- Cooling: `--cooling` (`ambient_rate`) defaults to 0.5, not the original 0.25.
+  Water has mass 0 (no gravity); wax stops rising only once ambient cooling
+  brings its mass back above 0, which takes ~5,000 steps. The square is ~3x
+  shorter than the lamp, so at 0.25 wax waited at the top (43% of wax in the
+  top third, Bill noticed on the display). Wax in top / middle / bottom third
+  over 27,000 steps: 0.25 -> .43/.10/.47, 0.5 -> .23/.08/.69,
+  0.75 -> .18/.06/.76, 1.0 -> .11/.04/.85.
+- First Pi run on the display (NumPy backend, --fps 6): ~134 ms compute per
+  frame, 5 late frames in the first minute and none after.
 - Next idea: a circular domain (wax pools at the bottom and merges at the top),
   probably via a signed distance function instead of the polygon boundary.
 - Rendering: the splat is linear, so particles are spread bilinearly onto a
@@ -89,8 +113,16 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   0.125, matching `show_image` (`z**2 / (256 * dimness)`, dimness 8).
 - Display driving follows display1593's `playback.py`: pipelined mode,
   `show(t)` at a fixed rate, late-frame warning counter, `show_slack` report.
-- Mac timing (933 particles, 4 steps/frame): 7.3 ms simulation + 1.5 ms
-  rendering per frame. Pi timing not measured yet (guess 10-20x slower).
+- Speed (933 particles, 4 steps/frame), per frame:
+  - NumPy: Mac 9.2 ms; Pi 118.5 ms (93.8 sim + 24.8 render, 2026-11-03),
+    13.6x slower than the Mac, too slow for 10 fps.
+  - Numba (`src/lava_lamp/fast.py`, default backend when installed; numba is on
+    the Pi for display1593): Mac 2.6 ms (4 threads 0.34 ms/step vs 0.81 ms on 1
+    thread). Pi not measured yet.
+  - Numba version: cell list (cells h wide), each particle sums its own
+    neighbours (pairs computed twice, no write conflicts), `parallel=True`,
+    `nogil=True` (so the driver's serial threads can run), `cache=True`.
+    Matches NumPy to ~3e-14. The LED splat is exact (no grid) in Numba.
 
 ## History and performance
 
