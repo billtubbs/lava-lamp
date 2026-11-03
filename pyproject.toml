@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lava-lamp-sph"
+name = "lava-lamp"
 version = "0.1.0"
 description = "NumPy/SciPy port of the physics of a browser SPH lava lamp simulator"
 readme = "README.md"
@@ -19,10 +19,14 @@ demo = [
     "matplotlib>=3.7",
     "pillow>=9.0",
 ]
+test = ["pytest>=8.0"]
 
 [project.urls]
 "Original simulator" = "https://lava-lamp-simulation.web.app/"
 "Reddit post" = "https://www.reddit.com/r/Simulated/comments/1t11plc/oc_lava_lamp_simulation_using_sph_fluid_dynamics/"
 
-[tool.setuptools]
-py-modules = ["lava_lamp_sph"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -17,7 +17,7 @@ from matplotlib.path import Path as MplPath
 import numpy as np
 from scipy.signal import fftconvolve
 
-import lava_lamp_sph as L
+from lava_lamp import sph as L
 
 # --- renderer: port of the two shader passes --------------------------------
 SPLAT_RADIUS = 34.0      # CONFIG.PARTICLE_RADIUS
