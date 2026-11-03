@@ -11,7 +11,7 @@ Modes:
 
     python play_lava_lamp.py                    # run on the display (Pi)
     python play_lava_lamp.py --benchmark        # time it, no display needed
-    python play_lava_lamp.py --preview          # render preview.gif (needs matplotlib)
+    python play_lava_lamp.py --preview          # render media/preview.gif (needs matplotlib)
 
 Only the default mode needs the hardware. The others use display1593 only for
 the LED positions, so they run on a desktop.
@@ -234,6 +234,7 @@ def preview(lamp, path, n_frames=300, fps=10.0):
     """Save a GIF of the LED colours, drawn at the LED positions."""
     if not os.path.splitext(path)[1]:
         path += ".gif"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -323,10 +324,10 @@ def parse_args():
                     help="seconds between timing reports (default 60)")
     ap.add_argument("--benchmark", action="store_true",
                     help="time the simulation and rendering, no display")
-    ap.add_argument("--preview", nargs="?", const="preview.gif",
+    ap.add_argument("--preview", nargs="?", const="media/preview.gif",
                     metavar="FILE",
                     help="save a GIF of the LED colours, no display (default "
-                    "file preview.gif)")
+                    "file media/preview.gif)")
     ap.add_argument("--frames", type=int, default=None,
                     help="frames for --benchmark (100) or --preview (300)")
     return ap.parse_args()

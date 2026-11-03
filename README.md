@@ -63,7 +63,7 @@ are already installed, so this doesn't replace any system packages.
 - `tests/test_render.py`: tests for the renderer and the square domain.
 - `demo.py`: runs the simulation in the original lamp shape and renders it
   like the original's shaders.
-  `python demo.py --gif lava_lamp.gif`
+  `python demo.py` (writes `media/lava_lamp.gif` and `media/lava_lamp_frames.png`)
 
 ## Usage
 

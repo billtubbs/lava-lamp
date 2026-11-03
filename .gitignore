@@ -3,6 +3,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-stats.npy
 *.log
-preview.gif
+# graphical output (GIFs, PNGs) from demo.py and play_lava_lamp.py --preview
+media/

@@ -7,6 +7,7 @@ https://www.reddit.com/r/Simulated/comments/1t11plc/oc_lava_lamp_simulation_usin
 Usage:  python demo.py [--frames 6000] [--every 20] [--gif out.gif]
 """
 import argparse
+import os
 import time
 
 import matplotlib
@@ -78,8 +79,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=6000)
     ap.add_argument("--every", type=int, default=20)
-    ap.add_argument("--gif", default="lava_lamp.gif")
-    ap.add_argument("--png", default="lava_lamp_frames.png")
+    ap.add_argument("--gif", default="media/lava_lamp.gif")
+    ap.add_argument("--png", default="media/lava_lamp_frames.png")
     args = ap.parse_args()
 
     sim = L.LavaLampSim(n_particles=3000, seed=0)
@@ -109,6 +110,8 @@ def main():
     for ax, i in zip(axes, picks):
         ax.imshow(frames[i]); ax.set_axis_off()
         ax.set_title(f"frame {stats[i][0]}", fontsize=9)
+    for path in (args.png, args.gif):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fig.tight_layout(); fig.savefig(args.png, dpi=110, facecolor="black")
 
     # animation
@@ -117,7 +120,7 @@ def main():
     im = ax.imshow(frames[0])
     anim = FuncAnimation(fig, lambda i: (im.set_data(frames[i]),), frames=len(frames))
     anim.save(args.gif, writer=PillowWriter(fps=25))
-    np.save("stats.npy", np.array(stats))
+    np.save(os.path.join(os.path.dirname(args.gif) or ".", "stats.npy"), np.array(stats))
 
 
 if __name__ == "__main__":
