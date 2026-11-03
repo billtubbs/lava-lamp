@@ -38,11 +38,11 @@ from .sph import (
 
 # parameter vector indices (LavaParams.vector() order)
 (GRAVITY, H, STIFFNESS, VISC_WATER, VISC_WAX, ST_RATIO, TEMP_SPEED, MAX_VEL,
- GOAL_HOT, GOAL_COLD, AMBIENT_RATE, COND_RATE, HEATER_HEIGHT) = range(13)
+ GOAL_HOT, GOAL_COLD, AMBIENT_RATE, COND_RATE, HEATER_HEIGHT, DT) = range(14)
 assert PARAM_NAMES == (
     "gravity", "h", "stiffness", "visc_water", "visc_wax", "st_ratio",
     "temp_speed", "max_vel", "goal_hot", "goal_cold", "ambient_rate",
-    "cond_rate", "heater_height",
+    "cond_rate", "heater_height", "dt",
 ), "update the indices in fast.py to match LavaParams"
 
 
@@ -87,9 +87,10 @@ def _heat_and_gravity(S, p, width, height):
     for i in prange(n):
         x, y, vx, vy, m, mat = S[i, 0], S[i, 1], S[i, 2], S[i, 3], S[i, 4], S[i, 5]
         out[i, 0], out[i, 1], out[i, 2], out[i, 5] = x, y, vx, mat
-        out[i, 3] = vy + p[GRAVITY] * m             # gravity uses the old "mass"
+        out[i, 3] = vy + p[GRAVITY] * m * p[DT]     # gravity uses the old "mass"
         if mat > 0.5:
-            rate = (HEAT_BASE - abs(x - width / 2) / width * HEAT_FALLOFF) * p[TEMP_SPEED]
+            rate = ((HEAT_BASE - abs(x - width / 2) / width * HEAT_FALLOFF)
+                    * p[TEMP_SPEED] * p[DT])
             goal = p[GOAL_HOT] if y > height - p[HEATER_HEIGHT] else m
             m1 = m + (goal - m) * rate
             if m1 < p[GOAL_COLD]:
@@ -101,9 +102,10 @@ def _heat_and_gravity(S, p, width, height):
 
 
 @njit(cache=True, nogil=True)
-def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness):
+def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness, dt):
     """Scalar version of :func:`lava_lamp.sph.apply_boundary`."""
     nv = poly.shape[0]
+    mx, my = vx * dt, vy * dt                  # the move
 
     # 1. inside test (ray casting, crossing parity)
     inside = False
@@ -120,16 +122,16 @@ def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness):
     if not inside:
         # 2. snap to the first wall crossing along the step p0 -> p,
         #    or else to the nearest point on the outline
-        p0x, p0y = px - vx, py - vy
+        p0x, p0y = px - mx, py - my
         best_t, found = BIG, False
         best_d, snap_x, snap_y = BIG, px, py
         for i in range(nv):
             ax, ay = poly[i, 0], poly[i, 1]
             k = (i + 1) % nv
             ex, ey = poly[k, 0] - ax, poly[k, 1] - ay
-            denom = -ex * vy + vx * ey
+            denom = -ex * my + mx * ey
             if denom != 0:
-                s = (-vy * (p0x - ax) + vx * (p0y - ay)) / denom
+                s = (-my * (p0x - ax) + mx * (p0y - ay)) / denom
                 t = (ex * (p0y - ay) - ey * (p0x - ax)) / denom
                 if 0 <= s <= 1 and 0 <= t <= 1:
                     found = True
@@ -144,7 +146,7 @@ def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness):
             if d < best_d:
                 best_d, snap_x, snap_y = d, qx, qy
         if found:
-            xs, ys = p0x + best_t * vx, p0y + best_t * vy
+            xs, ys = p0x + best_t * mx, p0y + best_t * my
         else:
             xs, ys = snap_x, snap_y
 
@@ -161,7 +163,7 @@ def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness):
         dx, dy = xs - (ax + t * ex), ys - (ay + t * ey)
         d = np.hypot(dx, dy)
         if d < h:
-            f = wall_k * (1 - d / h) ** 2
+            f = wall_k * (1 - d / h) ** 2 * dt
             if d > NORMAL_EPS:
                 vx += f * dx / d
                 vy += f * dy / d
@@ -219,17 +221,18 @@ def _interact_and_move(S, p, poly, is_ccw, start, order, x0, y0, nx, ny):
                             dm += S[j, 4] - mi
                     fx += f * dx / r
                     fy += f * dy / r
-        vx1 = vxi + fx
-        vy1 = vyi + fy
+        dt = p[DT]
+        vx1 = vxi + fx * dt
+        vy1 = vyi + fy * dt
         speed = np.hypot(vx1, vy1)
         if speed > p[MAX_VEL]:
             fac = p[MAX_VEL] / max(speed, 1e-12)
             vx1 *= fac
             vy1 *= fac
-        xs, ys, vx3, vy3 = _boundary(xi + vx1, yi + vy1, vx1, vy1, wax_i,
-                                     poly, is_ccw, h, p[STIFFNESS])
+        xs, ys, vx3, vy3 = _boundary(xi + vx1 * dt, yi + vy1 * dt, vx1, vy1,
+                                     wax_i, poly, is_ccw, h, p[STIFFNESS], dt)
         out[i, 0], out[i, 1], out[i, 2], out[i, 3] = xs, ys, vx3, vy3
-        out[i, 4] = mi + p[COND_RATE] * dm
+        out[i, 4] = mi + p[COND_RATE] * dt * dm
         out[i, 5] = mati
     return out
 

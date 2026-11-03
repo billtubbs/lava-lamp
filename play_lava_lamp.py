@@ -4,12 +4,12 @@ The simulation runs in a square the shape of the display, ``--size`` px
 across (simulation units, see ``lava_lamp.sph``), with the particle density
 of the original lamp. Each displayed frame advances it ``--steps-per-frame``
 steps, then colours every LED from the particles around its centre (see
-``lava_lamp.render``). The original runs one step per screen refresh, about
-60 steps/s. The default, 24 fps x 0.5 steps/frame = 12 steps/s, is a fifth
-of that. With a fractional number of steps per frame, each frame shows the
-particles part-way between two steps (linear interpolation), so the motion
-stays smooth while the physics is unchanged; a fast blob moves at most 2 px
-between frames. The wax starts as a cold layer at rest on the heater (see
+``lava_lamp.render``). The original runs one step of time 1 per screen
+refresh, about 60 time units/s. The lamp's speed here is fps x steps per
+frame x dt; the default, 24 fps x 1 step/frame x dt 0.5, is 12 time units/s,
+a fifth of the original's. A fast blob moves at most 2 px between frames.
+With a fractional number of steps per frame, each frame shows the particles
+part-way between two steps (linear interpolation). The wax starts as a cold layer at rest on the heater (see
 ``LavaLampSim.settle``).
 
 Modes:
@@ -72,7 +72,7 @@ class LavaLampLeds:
     """The simulation in a square, coloured at the LED centres."""
 
     def __init__(self, size=200.0, n_particles=None, wax_ratio=0.2,
-                 params=None, steps_per_frame=0.5, brightness=0.125, gamma=2.2,
+                 params=None, steps_per_frame=1, brightness=0.125, gamma=2.2,
                  seed=None, backend="numba", water_colour=WATER_COLOUR,
                  wax_colours=WAX_COLOURS, hot_temp=HOT_TEMP):
         self.size = size
@@ -165,7 +165,8 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
     lamp.advance()
     lamp.led_values()
     with Display1593(pipelined=not sync) as dis:
-        print(f"Running at {fps:g} fps, {lamp.steps_per_frame} steps/frame "
+        print(f"Running at {fps:g} fps, {lamp.steps_per_frame:g} steps/frame "
+              f"of dt {lamp.params.dt:g} "
               f"({'synchronous' if sync else 'pipelined'} mode). "
               "Ctrl+C to stop.")
         dis.clear_all()
@@ -263,7 +264,8 @@ def benchmark(lamp, n_frames=100, fps=24.0):
     threads = f", {numba.get_num_threads()} threads" if lamp.backend == "numba" else ""
     print(f"{lamp.backend}{threads}: "
           f"{lamp.n_particles} particles, {lamp.size:g} px square, "
-          f"{lamp.steps_per_frame} steps/frame, {n_frames} frames")
+          f"{lamp.steps_per_frame:g} steps/frame of dt {lamp.params.dt:g}, "
+          f"{n_frames} frames")
     print(f"  simulation: {step_ms:6.1f} ms/frame "
           f"({step_ms / lamp.steps_per_frame:.1f} ms/step)")
     print(f"  rendering:  {render_ms:6.1f} ms/frame")
@@ -313,11 +315,15 @@ def parse_args():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fps", type=float, default=24.0,
                     help="display frame rate (default 24)")
-    ap.add_argument("--steps-per-frame", type=float, default=0.5,
-                    help="simulation steps per displayed frame: with --fps, "
-                    "sets how fast the lamp moves (default 0.5, i.e. 12 "
-                    "steps/s at 24 fps). Fractions are shown smoothly, by "
-                    "interpolating between steps")
+    ap.add_argument("--steps-per-frame", type=float, default=1,
+                    help="simulation steps per displayed frame (default 1). "
+                    "The lamp's speed is fps x steps per frame x dt time "
+                    "units/s. Fractions are shown smoothly, by interpolating "
+                    "between steps")
+    ap.add_argument("--dt", type=float, default=0.5,
+                    help="simulation time step (default 0.5; the original's "
+                    "is 1). Smaller is more accurate but needs more steps for "
+                    "the same speed")
     ap.add_argument("--size", type=float, default=200.0,
                     help="side of the square in simulation px; the particle "
                     "count scales with its area, and the blobs look bigger on "
@@ -387,7 +393,8 @@ def main():
     if args.threads is not None and args.backend == "numba":
         numba.set_num_threads(args.threads)
     params = sph.LavaParams(temp_speed=args.heat, st_ratio=args.surface_tension,
-                            ambient_rate=args.cooling, visc_wax=args.viscosity)
+                            ambient_rate=args.cooling, visc_wax=args.viscosity,
+                            dt=args.dt)
     lamp = LavaLampLeds(size=args.size, n_particles=args.n_particles,
                         wax_ratio=args.wax_ratio, params=params,
                         steps_per_frame=args.steps_per_frame,

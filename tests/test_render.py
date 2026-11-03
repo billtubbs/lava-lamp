@@ -77,3 +77,28 @@ def test_settle_stops_motion_and_restores_heat():
     xy = sim.state[:2].copy()
     sim.step(1)
     assert np.abs(sim.state[:2] - xy).max() < 0.2
+
+
+def test_numba_matches_numpy_with_smaller_dt():
+    pytest.importorskip("numba")
+    P = sph.LavaParams(dt=0.5)
+    a = square_sim(300)
+    a.params = P
+    b = sph.LavaLampSim(state=a.state, params=P, width=SIZE, height=SIZE,
+                        polygon=sph.square_polygon(SIZE), backend="numba")
+    a.step(4)
+    b.step(4)
+    assert np.abs(a.state - b.state).max() < 1e-9
+
+
+def test_dt_one_is_the_default():
+    # dt = 1 must reproduce the original (checked against the JS translation
+    # in test_reference.py); smaller dt moves particles about half as far
+    a, b = square_sim(300), square_sim(300)
+    b.params = sph.LavaParams(dt=0.5)
+    x0 = a.state[:2].copy()
+    a.step(1)
+    b.step(1)
+    move_a = np.hypot(*(a.state[:2] - x0)).mean()
+    move_b = np.hypot(*(b.state[:2] - x0)).mean()
+    assert 0.3 < move_b / move_a < 0.7

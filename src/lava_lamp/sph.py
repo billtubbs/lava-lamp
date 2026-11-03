@@ -81,12 +81,13 @@ class LavaParams:
     visc_wax: float = 0.3  # particle.viscosity of wax (= VISCOSITY at init)
     st_ratio: float = 2.5  # "Surface Tension" slider
     temp_speed: float = 1.0  # "Heat Transfer" slider
-    max_vel: float = 4.0  # velocity clamp [px/frame]
+    max_vel: float = 4.0  # velocity clamp [px per unit time]
     goal_hot: float = -6.0  # "mass" wax relaxes to on the heater
     goal_cold: float = 1.0  # "mass" wax relaxes to through ambient cooling
     ambient_rate: float = 0.25
     cond_rate: float = 1e-5  # wax-wax conduction rate
     heater_height: float = 10.0  # heater zone thickness above the bottom [px]
+    dt: float = 1.0  # time step; 1 = one frame of the original
 
     def vector(self) -> np.ndarray:
         return np.array([float(getattr(self, f.name)) for f in fields(self)])
@@ -175,10 +176,12 @@ def heat_and_gravity(
     """Gravity, then the heater and ambient cooling of the wax."""
     x, y, vx, vy, m, mat = S.T
     out = S.copy()
-    out[:, 3] = vy + P.gravity * m  # gravity uses the old "mass"
+    out[:, 3] = vy + P.gravity * m * P.dt  # gravity uses the old "mass"
     rate = (
-        HEAT_BASE - np.abs(x - width / 2) / width * HEAT_FALLOFF
-    ) * P.temp_speed
+        (HEAT_BASE - np.abs(x - width / 2) / width * HEAT_FALLOFF)
+        * P.temp_speed
+        * P.dt
+    )
     goal = np.where(y > height - P.heater_height, P.goal_hot, m)
     m1 = m + (goal - m) * rate
     m1 = np.where(m1 < P.goal_cold, m1 + P.ambient_rate * rate, m1)
@@ -187,13 +190,23 @@ def heat_and_gravity(
 
 
 def apply_boundary(
-    px, py, vx, vy, is_wax, polygon: np.ndarray, h: float, stiffness: float
+    px,
+    py,
+    vx,
+    vy,
+    is_wax,
+    polygon: np.ndarray,
+    h: float,
+    stiffness: float,
+    dt: float = 1.0,
 ):
     """Port of ``applyBorderForce``: snap back inside, then wall repulsion.
 
     ``px, py`` are the positions after the move and ``vx, vy`` the velocities
-    used for the move.  Returns the new ``(px, py, vx, vy)``.
+    used for the move, which was ``(vx, vy) * dt``.  Returns the new
+    ``(px, py, vx, vy)``.
     """
+    mx, my = vx * dt, vy * dt  # the move
     poly = np.asarray(polygon, dtype=float)
     nv = len(poly)
     area = sum(
@@ -217,7 +230,7 @@ def apply_boundary(
 
     # 2. outside: snap to the first wall crossing along the step p0 -> p,
     #    or else to the nearest point on the outline
-    p0x, p0y = px - vx, py - vy
+    p0x, p0y = px - mx, py - my
     best_t = np.full(px.shape, BIG)
     found = np.zeros(px.shape, dtype=bool)
     best_d = np.full(px.shape, BIG)
@@ -225,10 +238,10 @@ def apply_boundary(
     for i in range(nv):
         a, b = poly[i], poly[(i + 1) % nv]
         ex, ey = b - a
-        denom = -ex * vy + vx * ey
+        denom = -ex * my + mx * ey
         nz = denom != 0
         d_safe = np.where(nz, denom, 1.0)
-        s = (-vy * (p0x - a[0]) + vx * (p0y - a[1])) / d_safe
+        s = (-my * (p0x - a[0]) + mx * (p0y - a[1])) / d_safe
         t = (ex * (p0y - a[1]) - ey * (p0x - a[0])) / d_safe
         valid = nz & (s >= 0) & (s <= 1) & (t >= 0) & (t <= 1)
         best_t = np.where(valid & (t < best_t), t, best_t)
@@ -245,8 +258,8 @@ def apply_boundary(
         snap_x = np.where(better, qx, snap_x)
         snap_y = np.where(better, qy, snap_y)
     t_hit = np.where(found, best_t, 0.0)
-    xs = np.where(inside, px, np.where(found, p0x + t_hit * vx, snap_x))
-    ys = np.where(inside, py, np.where(found, p0y + t_hit * vy, snap_y))
+    xs = np.where(inside, px, np.where(found, p0x + t_hit * mx, snap_x))
+    ys = np.where(inside, py, np.where(found, p0y + t_hit * my, snap_y))
 
     # 3. SPH-style wall repulsion (changes velocity for the next step)
     wall_k = stiffness * np.where(is_wax, WALL_WAX_FACTOR, 1.0)
@@ -261,7 +274,7 @@ def apply_boundary(
         t = np.clip(((xs - a[0]) * ex + (ys - a[1]) * ey) / l2, 0, 1)
         dx, dy = xs - (a[0] + t * ex), ys - (a[1] + t * ey)
         d = np.hypot(dx, dy)
-        f = np.where(d < h, wall_k * (1 - d / h) ** 2, 0.0)
+        f = np.where(d < h, wall_k * (1 - d / h) ** 2, 0.0) * dt
         far = d > NORMAL_EPS
         d_safe = np.maximum(d, NORMAL_EPS)
         vx = vx + f * np.where(far, dx / d_safe, n_in_x)
@@ -299,14 +312,14 @@ def interact(
     impulse = (dot > 0) * dot / (r2 + VISC_EPS * h * h) * visc * (1 - q)
 
     # equal and opposite: +f on i, -f on j (the unit vector flips sign)
-    f = pressure - impulse
+    f = (pressure - impulse) * P.dt
     fx, fy = f * dx / r, f * dy / r
     vx1 = vx + np.bincount(i, fx, n) - np.bincount(j, fx, n)
     vy1 = vy + np.bincount(i, fy, n) - np.bincount(j, fy, n)
 
     # wax-wax conduction is one-sided in the JS: only the higher index changes
     ww = wax_i & wax_j
-    m1 = m + P.cond_rate * np.bincount(j[ww], m[i[ww]] - m[j[ww]], n)
+    m1 = m + P.cond_rate * P.dt * np.bincount(j[ww], m[i[ww]] - m[j[ww]], n)
     return vx1, vy1, m1
 
 
@@ -317,7 +330,7 @@ def step(
     width: float = 400.0,
     height: float = 600.0,
 ) -> np.ndarray:
-    """Advance the (N, 6) state by one frame and return the new state."""
+    """Advance the (N, 6) state by one time step ``P.dt``."""
     S = heat_and_gravity(S, P, width, height)
     vx1, vy1, m1 = interact(S, P)
 
@@ -328,10 +341,18 @@ def step(
     )
     vx2, vy2 = vx1 * fac, vy1 * fac
 
-    # integrate (dt = 1 frame) and apply the lamp boundary
+    # integrate and apply the lamp boundary
     x, y, mat = S[:, 0], S[:, 1], S[:, 5]
     xs, ys, vx3, vy3 = apply_boundary(
-        x + vx2, y + vy2, vx2, vy2, mat > 0.5, polygon, P.h, P.stiffness
+        x + vx2 * P.dt,
+        y + vy2 * P.dt,
+        vx2,
+        vy2,
+        mat > 0.5,
+        polygon,
+        P.h,
+        P.stiffness,
+        P.dt,
     )
     return np.column_stack([xs, ys, vx3, vy3, m1, mat])
 

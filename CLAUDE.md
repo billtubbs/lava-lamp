@@ -73,12 +73,25 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   On the Pi it's installed into the system Python with `pip install -e .`
   (no venv), alongside display1593.
 - Defaults chosen by Bill on the display: `--fps 24 --viscosity 0.5
-  --surface-tension 3.0` (0 late frames over 5 min, ~16 ms compute per frame),
-  at half the speed he tried, so `--steps-per-frame 0.5` = 12 steps/s.
-  Fractional steps per frame are shown by linear interpolation of positions
-  and temperature between the last two steps (`LavaLampLeds.shown`), so the
-  physics is unchanged (a smaller dt inside the physics would have changed the
-  tuned look).
+  --surface-tension 3.0` (0 late frames over 5 min, ~16 ms compute per frame
+  at 1 step/frame), at half the speed he tried. He prefers a smaller time step
+  to slower display time, so the default is `--dt 0.5` with 1 step/frame
+  (12 time units/s). Lamp speed = fps x steps/frame x dt.
+- `LavaParams.dt` (default 1.0 = the original, bit-for-bit; test_reference
+  still passes) scales every per-step change: gravity, pair forces (pressure,
+  cohesion, viscosity impulse), wall push, heating/cooling/conduction rates,
+  and the move (also used by the wall-crossing snap). `max_vel` stays in px
+  per time unit. Measured at Bill's settings over the same simulated time:
+  dt 1 / 0.5 / 0.25 give the same blob counts (2.9 / 3.6 / 3.4, within
+  run-to-run variation), wax distribution and particle jitter (0.035 / 0.032 /
+  0.031 px); no particle hit the speed cap. So the model is essentially
+  converged at dt 1, and dt 0.5 doesn't change the look.
+- Fractional `--steps-per-frame` is still supported: frames show positions
+  and temperature linearly interpolated between the last two steps
+  (`LavaLampLeds.shown`).
+- At Bill's settings (visc 0.5, st 3.0) about 0.33-0.40 of the wax is in the
+  top third (vs 0.23 at the original's 0.3 / 2.5); raise `--cooling` if that
+  looks top-heavy.
 - Saved initial state: Bill asked why not save a settled state instead of
   settling each start. Not done: it depends on size, particle count, wax ratio
   and physics parameters, settling takes ~0.2 s on the Pi, and each start gets
