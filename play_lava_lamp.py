@@ -5,9 +5,12 @@ across (simulation units, see ``lava_lamp.sph``), with the particle density
 of the original lamp. Each displayed frame advances it ``--steps-per-frame``
 steps, then colours every LED from the particles around its centre (see
 ``lava_lamp.render``). The original runs one step per screen refresh, about
-60 steps/s. The default, 20 fps x 1 step/frame = 20 steps/s, is a third of
-that: slower, and a fast blob moves at most 4 px (under one LED spacing)
-between frames. The wax starts as a cold layer resting on the heater.
+60 steps/s. The default, 24 fps x 0.5 steps/frame = 12 steps/s, is a fifth
+of that. With a fractional number of steps per frame, each frame shows the
+particles part-way between two steps (linear interpolation), so the motion
+stays smooth while the physics is unchanged; a fast blob moves at most 2 px
+between frames. The wax starts as a cold layer at rest on the heater (see
+``LavaLampSim.settle``).
 
 Modes:
 
@@ -69,7 +72,7 @@ class LavaLampLeds:
     """The simulation in a square, coloured at the LED centres."""
 
     def __init__(self, size=200.0, n_particles=None, wax_ratio=0.2,
-                 params=None, steps_per_frame=1, brightness=0.125, gamma=2.2,
+                 params=None, steps_per_frame=0.5, brightness=0.125, gamma=2.2,
                  seed=None, backend="numba", water_colour=WATER_COLOUR,
                  wax_colours=WAX_COLOURS, hot_temp=HOT_TEMP):
         self.size = size
@@ -78,6 +81,8 @@ class LavaLampLeds:
             n_particles = int(round(sph.LAMP_DENSITY * size * size))
         self.n_particles, self.wax_ratio, self.seed = n_particles, wax_ratio, seed
         self.params = params or sph.LavaParams()
+        if steps_per_frame <= 0:
+            raise ValueError("steps_per_frame must be positive")
         self.steps_per_frame = steps_per_frame
         self.brightness, self.gamma = brightness, gamma
         self.leds = np.c_[centres_x, centres_y] * (size / DISPLAY_SIZE)
@@ -96,20 +101,51 @@ class LavaLampLeds:
             params=self.params, width=self.size, height=self.size,
             polygon=sph.square_polygon(self.size), seed=self.seed,
             backend=self.backend, wax_at="bottom")
+        # start from rest: otherwise the wax layer collapses under its own
+        # weight, then bounces (grows and shrinks) every ~4 s
+        self.sim.settle()
+        self.time = 0.0  # simulation time shown, in steps
+        self._prev = self.sim.state.copy()  # state one step before sim.state
 
     def advance(self):
-        """Step the simulation; resets it if the state is no longer finite."""
-        self.sim.step(self.steps_per_frame)
+        """Advance the shown time by ``steps_per_frame`` steps.
+
+        Runs whole simulation steps until the simulation is at or past the
+        shown time. With a fractional ``steps_per_frame`` the frame shows the
+        particles part-way between the last two steps (see :meth:`shown`),
+        so the motion stays smooth. Resets the simulation if its state is no
+        longer finite.
+        """
+        self.time += self.steps_per_frame
+        while self.sim.frame < self.time - 1e-9:
+            self._prev = self.sim.state.copy()
+            self.sim.step(1)
         if not np.isfinite(self.sim.state).all():
             logger.warning("Non-finite state at frame %d, resetting",
                            self.sim.frame)
             print("WARNING: simulation diverged, resetting")
             self.reset()
 
+    def shown(self):
+        """(positions, is_wax, temperature) at the shown time.
+
+        Linear interpolation between the last two steps, by the fraction of
+        the step reached (1 with a whole number of steps per frame).
+        """
+        s = self.sim
+        a = 1.0 - (s.frame - self.time)
+        cur = s.state
+        if a < 1.0 - 1e-9:
+            st = self._prev + a * (cur - self._prev)
+        else:
+            st = cur
+        P = self.params
+        temperature = 1.0 - (st[4] - P.goal_hot) / (P.goal_cold - P.goal_hot)
+        return st[:2].T, cur[5] > 0.5, temperature
+
     def rgb(self):
         """(1593, 3) colours in 0-1."""
-        s = self.sim
-        return self.renderer.rgb(s.positions, s.is_wax, s.temperature())
+        return self.renderer.rgb(*self.shown())
 
     def led_values(self):
         """(1593, 3) uint8 values for ``set_all_leds``."""
@@ -206,7 +242,7 @@ def report(compute, show_slack, n_late, period):
     logger.info(msg)
 
 
-def benchmark(lamp, n_frames=100, fps=20.0):
+def benchmark(lamp, n_frames=100, fps=24.0):
     """Time the simulation and rendering per frame (no display needed)."""
     t0 = time.perf_counter()
     lamp.advance()  # warm up (and compile, with numba)
@@ -236,7 +272,7 @@ def benchmark(lamp, n_frames=100, fps=20.0):
           "serial I/O to the display)")
 
 
-def preview(lamp, path, n_frames=300, fps=20.0):
+def preview(lamp, path, n_frames=300, fps=24.0):
     """Save a GIF of the LED colours, drawn at the LED positions."""
     if not os.path.splitext(path)[1]:
         path += ".gif"
@@ -275,12 +311,13 @@ def preview(lamp, path, n_frames=300, fps=20.0):
 def parse_args():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--fps", type=float, default=20.0,
-                    help="display frame rate (default 20)")
-    ap.add_argument("--steps-per-frame", type=int, default=1,
+    ap.add_argument("--fps", type=float, default=24.0,
+                    help="display frame rate (default 24)")
+    ap.add_argument("--steps-per-frame", type=float, default=0.5,
                     help="simulation steps per displayed frame: with --fps, "
-                    "sets how fast the lamp moves (default 1, i.e. 20 steps/s "
-                    "at 20 fps)")
+                    "sets how fast the lamp moves (default 0.5, i.e. 12 "
+                    "steps/s at 24 fps). Fractions are shown smoothly, by "
+                    "interpolating between steps")
     ap.add_argument("--size", type=float, default=200.0,
                     help="side of the square in simulation px; the particle "
                     "count scales with its area, and the blobs look bigger on "
@@ -291,12 +328,13 @@ def parse_args():
                     help="fraction of the particles that are wax (default 0.2)")
     ap.add_argument("--heat", type=float, default=1.0,
                     help="heat transfer rate (the original's slider, default 1)")
-    ap.add_argument("--surface-tension", type=float, default=2.5,
-                    help="the original's slider (default 2.5)")
-    ap.add_argument("--viscosity", type=float, default=0.3,
-                    help="wax viscosity (default 0.3, as in the original). "
+    ap.add_argument("--surface-tension", type=float, default=3.0,
+                    help="the original's slider (default 3.0; the original's "
+                    "is 2.5)")
+    ap.add_argument("--viscosity", type=float, default=0.5,
+                    help="wax viscosity (default 0.5; the original's is 0.3). "
                     "Lower makes fewer, bigger blobs: on average 3.4 blobs "
-                    "at 0.3, 2.2 at 0.15, 1 at 0.1; higher changes little")
+                    "at 0.3, 2.2 at 0.15, 1 at 0.1")
     ap.add_argument("--cooling", type=float, default=COOLING,
                     help="ambient cooling rate of the wax (default "
                     f"{COOLING:g}; the original's is 0.25). Higher: more wax "

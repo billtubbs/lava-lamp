@@ -60,3 +60,20 @@ def test_numba_matches_numpy():
     exact = PointRenderer(points, SIZE, SIZE, cell=None).rgb(*args)
     fast = PointRenderer(points, SIZE, SIZE, cell="numba").rgb(*args)
     assert np.abs(fast - exact).max() < 1e-9
+
+
+def test_settle_stops_motion_and_restores_heat():
+    n = int(round(sph.LAMP_DENSITY * SIZE * SIZE))
+    sim = sph.LavaLampSim(n_particles=n, width=SIZE, height=SIZE,
+                          polygon=sph.square_polygon(SIZE), seed=0,
+                          wax_at="bottom")
+    m0 = sim.state[4].copy()
+    sim.settle(100)
+    assert sim.params.temp_speed == 1.0
+    assert sim.frame == 0
+    assert np.array_equal(sim.state[4], m0)        # no heating while settling
+    # at rest: particles barely move in a step (the stored velocities aren't
+    # a good measure, as they include the walls' push for the next step)
+    xy = sim.state[:2].copy()
+    sim.step(1)
+    assert np.abs(sim.state[:2] - xy).max() < 0.2

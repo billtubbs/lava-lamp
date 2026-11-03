@@ -72,7 +72,18 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   (Raspberry Pi Zero 2 W, 4 cores) to test on the hardware.
   On the Pi it's installed into the system Python with `pip install -e .`
   (no venv), alongside display1593.
-- Speed: default 20 fps x 1 step/frame = 20 steps/s (the original runs ~60).
+- Defaults chosen by Bill on the display: `--fps 24 --viscosity 0.5
+  --surface-tension 3.0` (0 late frames over 5 min, ~16 ms compute per frame),
+  at half the speed he tried, so `--steps-per-frame 0.5` = 12 steps/s.
+  Fractional steps per frame are shown by linear interpolation of positions
+  and temperature between the last two steps (`LavaLampLeds.shown`), so the
+  physics is unchanged (a smaller dt inside the physics would have changed the
+  tuned look).
+- Saved initial state: Bill asked why not save a settled state instead of
+  settling each start. Not done: it depends on size, particle count, wax ratio
+  and physics parameters, settling takes ~0.2 s on the Pi, and each start gets
+  a random jitter. Offered a per-settings cache if he wants one.
+- Earlier speed: 20 fps x 1 step/frame = 20 steps/s (the original runs ~60).
   Bill found 10 fps x 4 steps too fast and jumpy (up to 16 px, ~3 LEDs, per
   frame at the speed cap of 4 px/step) and asked for half speed. Slow the lamp
   by running fewer steps per second, not by changing the physics (dt = 1 is
@@ -80,8 +91,18 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   late frames were probably start-up, now avoided by running one frame before
   the display clock starts).
 - Start: wax starts as a cold layer on the heater (`wax_at="bottom"`), not at
-  the top (the original's "waterfall"; Bill's request). It settles in ~1 s;
-  the first plume rises after ~50 s at 20 steps/s (a lamp warming up).
+  the top (the original's "waterfall"; Bill's request), then
+  `LavaLampSim.settle()` (300 steps, heater off, velocities x0.8 per step).
+  The first plume rises after ~50 s at 20 steps/s (a lamp warming up).
+- Why settle: the fluid is compressible (soft repulsion, no density
+  constraint) and only wax has weight (water mass 0), so the layer is a weight
+  on a spring. Unsettled, it collapsed 46 -> 31 px in 12 steps, then
+  "breathed" with a ~80-step (4 s) period, +/-6 px, ~25% of its LED area
+  peak-to-peak, barely damped (viscosity only acts on pairs moving apart, and
+  not between wax and water). Bill saw it as the wax volume growing and
+  shrinking. Settled: breathing 12 -> 1 px peak-to-peak. Doubling stiffness
+  didn't help. The layer still swells slowly (~30 -> 40 px) as it heats,
+  since lighter wax is squeezed less.
 - Blob count: ~3 blobs at a time (2-5). Measured over 30,000 steps (mean blobs
   of >= 15 wax particles): visc_wax 0.3 -> 3.4, 0.2 -> 3.2, 0.15 -> 2.2,
   0.1 -> 1.0 (one merged mass); 0.45-0.6 and st_ratio 3.0-3.5 -> ~3.2-3.5;

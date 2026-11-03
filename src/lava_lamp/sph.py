@@ -407,6 +407,29 @@ class LavaLampSim:
             self.frame += 1
         return self.state
 
+    def settle(self, n_steps: int = 300, damping: float = 0.8) -> np.ndarray:
+        """Let the particles come to rest, with the heater off.
+
+        The fluid is compressible (soft repulsion, no density constraint) and
+        only the wax has weight, so a wax layer started at the grid's packing
+        density first collapses under its own weight, then bounces like a
+        weight on a spring, barely damped (the viscosity only acts on pairs
+        moving apart). Running ``n_steps`` steps with the heating off and the
+        velocities scaled by ``damping`` after each step removes both.
+        Doesn't count towards ``frame``.
+        """
+        heat = self.params.temp_speed
+        self.params.temp_speed = 0.0
+        try:
+            for _ in range(n_steps):
+                self._s = self._step_fn(
+                    self._s, self.params, self.polygon, self.width, self.height
+                )
+                self._s[:, 2:4] *= damping
+        finally:
+            self.params.temp_speed = heat
+        return self.state
+
     # convenience views
     @property
     def positions(self) -> np.ndarray:

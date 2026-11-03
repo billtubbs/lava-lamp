@@ -31,3 +31,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # for play_lava_lamp.py at the repo root
