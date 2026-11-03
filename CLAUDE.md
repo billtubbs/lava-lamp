@@ -72,8 +72,22 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   (Raspberry Pi Zero 2 W, 4 cores) to test on the hardware.
   On the Pi it's installed into the system Python with `pip install -e .`
   (no venv), alongside display1593.
-- Target: 10 fps. Each frame runs `--steps-per-frame` (default 4) simulation
-  steps; the original runs ~60 steps/s.
+- Speed: default 20 fps x 1 step/frame = 20 steps/s (the original runs ~60).
+  Bill found 10 fps x 4 steps too fast and jumpy (up to 16 px, ~3 LEDs, per
+  frame at the speed cap of 4 px/step) and asked for half speed. Slow the lamp
+  by running fewer steps per second, not by changing the physics (dt = 1 is
+  built into the model). 20 fps worked on the Pi (1590 frames in 79.5 s; the
+  late frames were probably start-up, now avoided by running one frame before
+  the display clock starts).
+- Start: wax starts as a cold layer on the heater (`wax_at="bottom"`), not at
+  the top (the original's "waterfall"; Bill's request). It settles in ~1 s;
+  the first plume rises after ~50 s at 20 steps/s (a lamp warming up).
+- Blob count: ~3 blobs at a time (2-5). Measured over 30,000 steps (mean blobs
+  of >= 15 wax particles): visc_wax 0.3 -> 3.4, 0.2 -> 3.2, 0.15 -> 2.2,
+  0.1 -> 1.0 (one merged mass); 0.45-0.6 and st_ratio 3.0-3.5 -> ~3.2-3.5;
+  st_ratio 2.0 -> 1.6. Size 250 -> 3.6, 300 (wax 0.15) -> 4.1. So lower
+  viscosity makes fewer, bigger blobs, not more. `--viscosity` is an option
+  (default 0.3).
 - Domain: a square `--size` px across (default 200) mapped to the display's
   2000 x 2000 LED coordinates. y increases downwards in both, so no flips.
   Particle count defaults to the original lamp's density (`LAMP_DENSITY`,
@@ -118,7 +132,9 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
     13.6x slower than the Mac, too slow for 10 fps.
   - Numba (`src/lava_lamp/fast.py`, default backend when installed; numba is on
     the Pi for display1593): Mac 2.6 ms (4 threads 0.34 ms/step vs 0.81 ms on 1
-    thread). Pi not measured yet.
+    thread). Pi: 19.5 ms/frame on 4 threads (9.7 sim + 9.9 render, 4 steps),
+    52.5 ms on 1 thread, vs 112.9 ms NumPy. The display's serial I/O runs in
+    background threads (Bill thinks it uses 2-3 cores).
   - Numba version: cell list (cells h wide), each particle sums its own
     neighbours (pairs computed twice, no write conflicts), `parallel=True`,
     `nogil=True` (so the driver's serial threads can run), `cache=True`.

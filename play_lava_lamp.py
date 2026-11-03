@@ -5,7 +5,9 @@ across (simulation units, see ``lava_lamp.sph``), with the particle density
 of the original lamp. Each displayed frame advances it ``--steps-per-frame``
 steps, then colours every LED from the particles around its centre (see
 ``lava_lamp.render``). The original runs one step per screen refresh, about
-60 steps/s, so 10 fps x 4 steps/frame runs at 2/3 of its speed.
+60 steps/s. The default, 20 fps x 1 step/frame = 20 steps/s, is a third of
+that: slower, and a fast blob moves at most 4 px (under one LED spacing)
+between frames. The wax starts as a cold layer resting on the heater.
 
 Modes:
 
@@ -67,7 +69,7 @@ class LavaLampLeds:
     """The simulation in a square, coloured at the LED centres."""
 
     def __init__(self, size=200.0, n_particles=None, wax_ratio=0.2,
-                 params=None, steps_per_frame=4, brightness=0.125, gamma=2.2,
+                 params=None, steps_per_frame=1, brightness=0.125, gamma=2.2,
                  seed=None, backend="numba", water_colour=WATER_COLOUR,
                  wax_colours=WAX_COLOURS, hot_temp=HOT_TEMP):
         self.size = size
@@ -93,7 +95,7 @@ class LavaLampLeds:
             n_particles=self.n_particles, wax_ratio=self.wax_ratio,
             params=self.params, width=self.size, height=self.size,
             polygon=sph.square_polygon(self.size), seed=self.seed,
-            backend=self.backend)
+            backend=self.backend, wax_at="bottom")
 
     def advance(self):
         """Step the simulation; resets it if the state is no longer finite."""
@@ -122,6 +124,10 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
     period = 1 / fps
     late = LateFrameCounter()
     logging.getLogger("display1593").addHandler(late)
+    # run one frame before the clock starts: with numba, the first call loads
+    # (or compiles) the compiled code, which would make the first frames late
+    lamp.advance()
+    lamp.led_values()
     with Display1593(pipelined=not sync) as dis:
         print(f"Running at {fps:g} fps, {lamp.steps_per_frame} steps/frame "
               f"({'synchronous' if sync else 'pipelined'} mode). "
@@ -200,7 +206,7 @@ def report(compute, show_slack, n_late, period):
     logger.info(msg)
 
 
-def benchmark(lamp, n_frames=100, fps=10.0):
+def benchmark(lamp, n_frames=100, fps=20.0):
     """Time the simulation and rendering per frame (no display needed)."""
     t0 = time.perf_counter()
     lamp.advance()  # warm up (and compile, with numba)
@@ -230,7 +236,7 @@ def benchmark(lamp, n_frames=100, fps=10.0):
           "serial I/O to the display)")
 
 
-def preview(lamp, path, n_frames=300, fps=10.0):
+def preview(lamp, path, n_frames=300, fps=20.0):
     """Save a GIF of the LED colours, drawn at the LED positions."""
     if not os.path.splitext(path)[1]:
         path += ".gif"
@@ -269,11 +275,12 @@ def preview(lamp, path, n_frames=300, fps=10.0):
 def parse_args():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--fps", type=float, default=10.0,
-                    help="display frame rate (default 10)")
-    ap.add_argument("--steps-per-frame", type=int, default=4,
-                    help="simulation steps per displayed frame: sets how fast "
-                    "the lamp moves (default 4)")
+    ap.add_argument("--fps", type=float, default=20.0,
+                    help="display frame rate (default 20)")
+    ap.add_argument("--steps-per-frame", type=int, default=1,
+                    help="simulation steps per displayed frame: with --fps, "
+                    "sets how fast the lamp moves (default 1, i.e. 20 steps/s "
+                    "at 20 fps)")
     ap.add_argument("--size", type=float, default=200.0,
                     help="side of the square in simulation px; the particle "
                     "count scales with its area, and the blobs look bigger on "
@@ -286,6 +293,10 @@ def parse_args():
                     help="heat transfer rate (the original's slider, default 1)")
     ap.add_argument("--surface-tension", type=float, default=2.5,
                     help="the original's slider (default 2.5)")
+    ap.add_argument("--viscosity", type=float, default=0.3,
+                    help="wax viscosity (default 0.3, as in the original). "
+                    "Lower makes fewer, bigger blobs: on average 3.4 blobs "
+                    "at 0.3, 2.2 at 0.15, 1 at 0.1; higher changes little")
     ap.add_argument("--cooling", type=float, default=COOLING,
                     help="ambient cooling rate of the wax (default "
                     f"{COOLING:g}; the original's is 0.25). Higher: more wax "
@@ -338,7 +349,7 @@ def main():
     if args.threads is not None and args.backend == "numba":
         numba.set_num_threads(args.threads)
     params = sph.LavaParams(temp_speed=args.heat, st_ratio=args.surface_tension,
-                            ambient_rate=args.cooling)
+                            ambient_rate=args.cooling, visc_wax=args.viscosity)
     lamp = LavaLampLeds(size=args.size, n_particles=args.n_particles,
                         wax_ratio=args.wax_ratio, params=params,
                         steps_per_frame=args.steps_per_frame,

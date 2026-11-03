@@ -132,8 +132,14 @@ def initial_state(
     width: float = 400.0,
     height: float = 600.0,
     seed: int | None = None,
+    wax_at: str = "top",
 ) -> np.ndarray:
-    """Replicates ``initParticles``: jittered grid, first ``wax_ratio`` are wax."""
+    """Replicates ``initParticles``: jittered grid, ``wax_ratio`` of it wax.
+
+    The grid fills the canvas row by row from the top. ``wax_at="top"`` makes
+    the first rows wax, as in the original (it then falls through the water);
+    ``"bottom"`` the last rows, so the wax starts resting on the heater.
+    """
     rng = np.random.default_rng(seed)
     R = height / width
     c_ideal = np.sqrt(n / R)
@@ -147,7 +153,12 @@ def initial_state(
     i = np.arange(n)
     x = ((i % per_row) + (rng.random(n) - 0.5) / 5) * (width / per_row)
     y = ((i // per_row) + (rng.random(n) - 0.5) / 5) * (height / per_col)
-    wax = i < n * wax_ratio
+    if wax_at == "top":
+        wax = i < n * wax_ratio
+    elif wax_at == "bottom":
+        wax = i >= n * (1 - wax_ratio)
+    else:
+        raise ValueError(f"unknown wax_at {wax_at!r}")
     s = np.zeros((NX, n))
     s[0], s[1] = x, y
     s[4] = np.where(wax, 1.5, 0.0)
@@ -338,6 +349,7 @@ class LavaLampSim:
     width, height, polygon : canvas size and lamp outline
     seed        : random seed for the initial jitter
     state       : optional initial (6, N) state instead of ``initial_state``
+    wax_at      : "top" (as in the original) or "bottom", see :func:`initial_state`
     backend     : "numpy" (:func:`step`) or "numba" (:func:`lava_lamp.fast.step`,
                   needs numba)
     """
@@ -353,6 +365,7 @@ class LavaLampSim:
         seed: int | None = None,
         state: np.ndarray | None = None,
         backend: str = "numpy",
+        wax_at: str = "top",
     ):
         self.params = params or LavaParams()
         if backend == "numba":
@@ -369,7 +382,7 @@ class LavaLampSim:
             else np.asarray(polygon)
         )
         s0 = (
-            initial_state(n_particles, wax_ratio, width, height, seed)
+            initial_state(n_particles, wax_ratio, width, height, seed, wax_at)
             if state is None
             else np.asarray(state, dtype=float)
         )
