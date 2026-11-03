@@ -10,7 +10,7 @@ import sys
 
 import numpy as np
 
-import lava_lamp_sph as L
+from lava_lamp import sph as L
 
 
 def ref_border(p, poly, H, K):
@@ -128,7 +128,8 @@ def ref_step(S, P: L.LavaParams, W=400.0, Hc=600.0, poly=None):
     return np.array(out).T
 
 
-def main():
+def reference_errors(n_steps=5):
+    """Max abs difference from the reference after each of ``n_steps`` steps."""
     rng = np.random.default_rng(1)
     n = 400
     S = L.initial_state(n, 0.3, seed=2)
@@ -142,15 +143,24 @@ def main():
     P = L.LavaParams(st_ratio=3.0, visc_wax=0.4)
 
     sim = L.LavaLampSim(state=S.copy(), params=P)
-    worst = 0.0
     S_ref = S.copy()
-    for k in range(5):
+    errors = []
+    for _ in range(n_steps):
         S_ref = ref_step(S_ref, P)
         sim.step()
-        err = np.max(np.abs(sim.state - S_ref))
-        worst = max(worst, err)
+        errors.append(np.max(np.abs(sim.state - S_ref)))
+    return errors
+
+
+def test_matches_reference():
+    assert max(reference_errors()) < 1e-9
+
+
+def main():
+    errors = reference_errors()
+    for k, err in enumerate(errors):
         print(f"step {k + 1}: max |numpy - reference| = {err:.3e}")
-    ok = worst < 1e-9
+    ok = max(errors) < 1e-9
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

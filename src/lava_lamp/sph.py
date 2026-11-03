@@ -1,5 +1,5 @@
 """
-lava_lamp_sph.py
+lava_lamp/sph.py
 ================
 
 Python port of the particle physics in the browser "Lava Lamp Simulator"
@@ -113,6 +113,17 @@ def lamp_polygon(width: float = 400.0, height: float = 600.0) -> np.ndarray:
             [cx - mid / 2, ym],
         ]
     )
+
+
+def square_polygon(size: float) -> np.ndarray:
+    """A square domain ``[0, size] x [0, size]``, shape (4, 2)."""
+    return np.array([[0.0, 0.0], [size, 0.0], [size, size], [0.0, size]])
+
+
+# Particles per px^2 inside the original lamp: 3,000 particles over the lamp's
+# area of about 128,600 px^2 (the initial grid fills the 400 x 600 canvas and
+# the particles outside the lamp are snapped inside on the first step).
+LAMP_DENSITY = 3000 / 128_640
 
 
 def initial_state(
