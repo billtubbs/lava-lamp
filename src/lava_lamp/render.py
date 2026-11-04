@@ -71,9 +71,20 @@ class PointRenderer:
                  (default 2, as in the original)
     """
 
-    def __init__(self, points, width, height, radius=SPLAT_RADIUS, cell=4.0,
-                 wax_fraction=0.2, wax_soft=0.1, water_rgb=WATER_RGB,
-                 wax_stops=WAX_STOPS, wax_only_temp=False, temp_scale=2.0):
+    def __init__(
+        self,
+        points,
+        width,
+        height,
+        radius=SPLAT_RADIUS,
+        cell=4.0,
+        wax_fraction=0.2,
+        wax_soft=0.1,
+        water_rgb=WATER_RGB,
+        wax_stops=WAX_STOPS,
+        wax_only_temp=False,
+        temp_scale=2.0,
+    ):
         self.points = np.asarray(points, dtype=float)
         self.radius, self.cell = radius, cell
         self.wax_fraction, self.wax_soft = wax_fraction, wax_soft
@@ -86,7 +97,7 @@ class PointRenderer:
             from . import fast
 
             self._fast = fast
-            self._x0, self._y0 = -radius, -radius   # margin around the domain
+            self._x0, self._y0 = -radius, -radius  # margin around the domain
             self._nx = int(np.ceil((width + 2 * radius) / radius))
             self._ny = int(np.ceil((height + 2 * radius) / radius))
         elif cell is not None:
@@ -94,15 +105,18 @@ class PointRenderer:
             # particles slightly outside still have 4 nodes
             self._nx = int(np.ceil(width / cell)) + 3
             self._ny = int(np.ceil(height / cell)) + 3
-            gx, gy = np.meshgrid((np.arange(self._nx) - 1) * cell,
-                                 (np.arange(self._ny) - 1) * cell)
-            nodes = np.c_[gx.ravel(), gy.ravel()]   # node k = iy * nx + ix
+            gx, gy = np.meshgrid(
+                (np.arange(self._nx) - 1) * cell,
+                (np.arange(self._ny) - 1) * cell,
+            )
+            nodes = np.c_[gx.ravel(), gy.ravel()]  # node k = iy * nx + ix
             self._kernel = self._splat_matrix(cKDTree(nodes))
 
     def _splat_matrix(self, other_tree):
         """Sparse (M, len(other)) matrix of kernel weights."""
         W = self._tree.sparse_distance_matrix(
-            other_tree, self.radius, output_type="coo_matrix")
+            other_tree, self.radius, output_type="coo_matrix"
+        )
         W.data = INFLUENCE * (1 - W.data / self.radius) ** 3
         return W.tocsr()
 
@@ -113,12 +127,27 @@ class PointRenderer:
         if self.cell == "numba":
             pos = np.ascontiguousarray(positions)
             start, order = self._fast.build_cells(
-                pos[:, 0], pos[:, 1], self._x0, self._y0, self.radius,
-                self._nx, self._ny)
-            return self._fast.splat(self.points, pos, values, self.radius,
-                                    start, order, self._x0, self._y0,
-                                    self._nx, self._ny)
-        u = positions / self.cell + 1.0            # grid coordinates
+                pos[:, 0],
+                pos[:, 1],
+                self._x0,
+                self._y0,
+                self.radius,
+                self._nx,
+                self._ny,
+            )
+            return self._fast.splat(
+                self.points,
+                pos,
+                values,
+                self.radius,
+                start,
+                order,
+                self._x0,
+                self._y0,
+                self._nx,
+                self._ny,
+            )
+        u = positions / self.cell + 1.0  # grid coordinates
         u[:, 0] = np.clip(u[:, 0], 0, self._nx - 1.001)
         u[:, 1] = np.clip(u[:, 1], 0, self._ny - 1.001)
         i0 = np.floor(u).astype(int)
@@ -126,7 +155,9 @@ class PointRenderer:
         n_nodes = self._nx * self._ny
         grid = np.zeros((n_nodes, values.shape[1]))
         for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-            w = (f[:, 0] if dx else 1 - f[:, 0]) * (f[:, 1] if dy else 1 - f[:, 1])
+            w = (f[:, 0] if dx else 1 - f[:, 0]) * (
+                f[:, 1] if dy else 1 - f[:, 1]
+            )
             k = (i0[:, 1] + dy) * self._nx + i0[:, 0] + dx
             for c in range(values.shape[1]):
                 grid[:, c] += np.bincount(k, w * values[:, c], n_nodes)
@@ -134,22 +165,34 @@ class PointRenderer:
 
     def wax_colour(self, t):
         t = np.clip(t, 0, 1)
-        return np.stack([np.interp(t, self._stop_t, self._stop_rgb[:, c])
-                         for c in range(3)], axis=-1)
+        return np.stack(
+            [
+                np.interp(t, self._stop_t, self._stop_rgb[:, c])
+                for c in range(3)
+            ],
+            axis=-1,
+        )
 
     def rgb(self, positions, is_wax, temperature):
         """(M, 3) colours in 0-1 for the given particles."""
         if self.wax_only_temp:
             temperature = temperature * is_wax
         values = np.c_[np.ones(len(is_wax)), is_wax, temperature]
-        total, d_wax, t_sum = self._splat(np.asarray(positions, float), values).T
+        total, d_wax, t_sum = self._splat(
+            np.asarray(positions, float), values
+        ).T
         t_weight = d_wax if self.wax_only_temp else total
         with np.errstate(invalid="ignore", divide="ignore"):
             frac = np.where(total > 0, d_wax / total, 0.0)
             avg_t = np.where(t_weight > 0, t_sum / t_weight, 0.0)
-        a = smoothstep(self.wax_fraction - self.wax_soft,
-                       self.wax_fraction + self.wax_soft, frac)[:, None]
-        return (1 - a) * self.water_rgb + a * self.wax_colour(self.temp_scale * avg_t)
+        a = smoothstep(
+            self.wax_fraction - self.wax_soft,
+            self.wax_fraction + self.wax_soft,
+            frac,
+        )[:, None]
+        return (1 - a) * self.water_rgb + a * self.wax_colour(
+            self.temp_scale * avg_t
+        )
 
 
 def to_led_values(rgb, brightness=1.0, gamma=2.2):

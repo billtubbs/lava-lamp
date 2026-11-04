@@ -89,9 +89,9 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
 - Fractional `--steps-per-frame` is still supported: frames show positions
   and temperature linearly interpolated between the last two steps
   (`LavaLampLeds.shown`).
-- At Bill's settings (visc 0.5, st 3.0) about 0.33-0.40 of the wax is in the
-  top third (vs 0.23 at the original's 0.3 / 2.5); raise `--cooling` if that
-  looks top-heavy.
+- At Bill's settings (visc 0.5, st 3.0) the wax was top-heavy at cooling 0.5
+  (top / bottom third 0.34 / 0.62), so the default `--cooling` is now 0.75
+  (0.24 / 0.71), at his request.
 - Saved initial state: Bill asked why not save a settled state instead of
   settling each start. Not done: it depends on size, particle count, wax ratio
   and physics parameters, settling takes ~0.2 s on the Pi, and each start gets

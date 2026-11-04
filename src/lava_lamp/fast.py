@@ -37,12 +37,37 @@ from .sph import (
 )
 
 # parameter vector indices (LavaParams.vector() order)
-(GRAVITY, H, STIFFNESS, VISC_WATER, VISC_WAX, ST_RATIO, TEMP_SPEED, MAX_VEL,
- GOAL_HOT, GOAL_COLD, AMBIENT_RATE, COND_RATE, HEATER_HEIGHT, DT) = range(14)
+(
+    GRAVITY,
+    H,
+    STIFFNESS,
+    VISC_WATER,
+    VISC_WAX,
+    ST_RATIO,
+    TEMP_SPEED,
+    MAX_VEL,
+    GOAL_HOT,
+    GOAL_COLD,
+    AMBIENT_RATE,
+    COND_RATE,
+    HEATER_HEIGHT,
+    DT,
+) = range(14)
 assert PARAM_NAMES == (
-    "gravity", "h", "stiffness", "visc_water", "visc_wax", "st_ratio",
-    "temp_speed", "max_vel", "goal_hot", "goal_cold", "ambient_rate",
-    "cond_rate", "heater_height", "dt",
+    "gravity",
+    "h",
+    "stiffness",
+    "visc_water",
+    "visc_wax",
+    "st_ratio",
+    "temp_speed",
+    "max_vel",
+    "goal_hot",
+    "goal_cold",
+    "ambient_rate",
+    "cond_rate",
+    "heater_height",
+    "dt",
 ), "update the indices in fast.py to match LavaParams"
 
 
@@ -85,12 +110,22 @@ def _heat_and_gravity(S, p, width, height):
     n = S.shape[0]
     out = np.empty_like(S)
     for i in prange(n):
-        x, y, vx, vy, m, mat = S[i, 0], S[i, 1], S[i, 2], S[i, 3], S[i, 4], S[i, 5]
+        x, y, vx, vy, m, mat = (
+            S[i, 0],
+            S[i, 1],
+            S[i, 2],
+            S[i, 3],
+            S[i, 4],
+            S[i, 5],
+        )
         out[i, 0], out[i, 1], out[i, 2], out[i, 5] = x, y, vx, mat
-        out[i, 3] = vy + p[GRAVITY] * m * p[DT]     # gravity uses the old "mass"
+        out[i, 3] = vy + p[GRAVITY] * m * p[DT]  # gravity uses the old "mass"
         if mat > 0.5:
-            rate = ((HEAT_BASE - abs(x - width / 2) / width * HEAT_FALLOFF)
-                    * p[TEMP_SPEED] * p[DT])
+            rate = (
+                (HEAT_BASE - abs(x - width / 2) / width * HEAT_FALLOFF)
+                * p[TEMP_SPEED]
+                * p[DT]
+            )
             goal = p[GOAL_HOT] if y > height - p[HEATER_HEIGHT] else m
             m1 = m + (goal - m) * rate
             if m1 < p[GOAL_COLD]:
@@ -105,12 +140,12 @@ def _heat_and_gravity(S, p, width, height):
 def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness, dt):
     """Scalar version of :func:`lava_lamp.sph.apply_boundary`."""
     nv = poly.shape[0]
-    mx, my = vx * dt, vy * dt                  # the move
+    mx, my = vx * dt, vy * dt  # the move
 
     # 1. inside test (ray casting, crossing parity)
     inside = False
     for i in range(nv):
-        j = i - 1 if i > 0 else nv - 1          # previous vertex, as in the JS
+        j = i - 1 if i > 0 else nv - 1  # previous vertex, as in the JS
         xi, yi, xj, yj = poly[i, 0], poly[i, 1], poly[j, 0], poly[j, 1]
         if yi == yj:
             continue
@@ -135,8 +170,7 @@ def _boundary(px, py, vx, vy, is_wax, poly, is_ccw, h, stiffness, dt):
                 t = (ex * (p0y - ay) - ey * (p0x - ax)) / denom
                 if 0 <= s <= 1 and 0 <= t <= 1:
                     found = True
-                    if t < best_t:
-                        best_t = t
+                    best_t = min(best_t, t)
             l2 = ex * ex + ey * ey
             if l2 == 0:
                 continue
@@ -185,7 +219,14 @@ def _interact_and_move(S, p, poly, is_ccw, start, order, x0, y0, nx, ny):
     h2 = h * h
     out = np.empty_like(S)
     for i in prange(n):
-        xi, yi, vxi, vyi, mi, mati = S[i, 0], S[i, 1], S[i, 2], S[i, 3], S[i, 4], S[i, 5]
+        xi, yi, vxi, vyi, mi, mati = (
+            S[i, 0],
+            S[i, 1],
+            S[i, 2],
+            S[i, 3],
+            S[i, 4],
+            S[i, 5],
+        )
         wax_i = mati > 0.5
         if wax_i:
             st_i, visc_i = p[ST_RATIO], p[VISC_WAX]
@@ -229,8 +270,18 @@ def _interact_and_move(S, p, poly, is_ccw, start, order, x0, y0, nx, ny):
             fac = p[MAX_VEL] / max(speed, 1e-12)
             vx1 *= fac
             vy1 *= fac
-        xs, ys, vx3, vy3 = _boundary(xi + vx1 * dt, yi + vy1 * dt, vx1, vy1,
-                                     wax_i, poly, is_ccw, h, p[STIFFNESS], dt)
+        xs, ys, vx3, vy3 = _boundary(
+            xi + vx1 * dt,
+            yi + vy1 * dt,
+            vx1,
+            vy1,
+            wax_i,
+            poly,
+            is_ccw,
+            h,
+            p[STIFFNESS],
+            dt,
+        )
         out[i, 0], out[i, 1], out[i, 2], out[i, 3] = xs, ys, vx3, vy3
         out[i, 4] = mi + p[COND_RATE] * dt * dm
         out[i, 5] = mati
@@ -239,13 +290,20 @@ def _interact_and_move(S, p, poly, is_ccw, start, order, x0, y0, nx, ny):
 
 def _is_ccw(poly):
     nv = len(poly)
-    area = sum(poly[i, 0] * poly[(i + 1) % nv, 1]
-               - poly[(i + 1) % nv, 0] * poly[i, 1] for i in range(nv))
+    area = sum(
+        poly[i, 0] * poly[(i + 1) % nv, 1] - poly[(i + 1) % nv, 0] * poly[i, 1]
+        for i in range(nv)
+    )
     return area > 0
 
 
-def step(S: np.ndarray, P: LavaParams, polygon: np.ndarray,
-         width: float = 400.0, height: float = 600.0) -> np.ndarray:
+def step(
+    S: np.ndarray,
+    P: LavaParams,
+    polygon: np.ndarray,
+    width: float = 400.0,
+    height: float = 600.0,
+) -> np.ndarray:
     """Numba version of :func:`lava_lamp.sph.step`."""
     p = P.vector()
     poly = np.ascontiguousarray(polygon, dtype=float)
@@ -256,8 +314,9 @@ def step(S: np.ndarray, P: LavaParams, polygon: np.ndarray,
     nx = max(int(np.ceil((x1 - x0) / P.h)), 1)
     ny = max(int(np.ceil((y1 - y0) / P.h)), 1)
     start, order = build_cells(Sp[:, 0], Sp[:, 1], x0, y0, P.h, nx, ny)
-    return _interact_and_move(Sp, p, poly, _is_ccw(poly), start, order,
-                              x0, y0, nx, ny)
+    return _interact_and_move(
+        Sp, p, poly, _is_ccw(poly), start, order, x0, y0, nx, ny
+    )
 
 
 # --------------------------------------------------------------------------
