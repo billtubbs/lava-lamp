@@ -159,6 +159,14 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   already smooths more than averaging over an LED's area.
 - Brightness: `to_led_values` applies gamma, then scales the output, default
   0.125, matching `show_image` (`z**2 / (256 * dimness)`, dimness 8).
+- Driver warnings: `DriverWarningCounter` counts late frames (templates
+  starting "Frame shown" / "Show time missed") separately from all other
+  display1593 warnings, and prints the first of each other kind. Before
+  2026-11-18 every warning counted as a "late frame": a 6.6 h run reported
+  345,876 late frames that were really two `Resp invalid` warnings per frame
+  from one board whose replies had gone one step out of step (fixed in
+  display1593's `BoardSerialWorker`, see its TODO.md). The log file is
+  rate-limited by display1593's `configure_root_logging`.
 - Display driving follows display1593's `playback.py`: pipelined mode,
   `show(t)` at a fixed rate, late-frame warning counter, `show_slack` report.
 - Speed (933 particles, 4 steps/frame), per frame:

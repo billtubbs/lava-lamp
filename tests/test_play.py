@@ -40,3 +40,30 @@ def test_rate_is_steps_per_frame():
     for _ in range(30):
         lamp.advance()
     assert lamp.sim.frame == 10
+
+
+def test_driver_warnings_counted_by_kind(capsys):
+    import logging
+
+    from play_lava_lamp import DriverWarningCounter
+
+    counter = DriverWarningCounter()
+    log = logging.getLogger("display1593.test_play")
+    log.addHandler(counter)
+    log.propagate = False
+    try:
+        log.warning("Frame shown %.1f ms late: %s not ready.", 3.0, "TEENSY1")
+        log.warning("Show time missed by %.1f ms.", 1.0)
+        for i in range(5):
+            log.warning("TEENSY1: reply %s matches no command", i)
+        log.warning("TEENSY2 sent a message: %s", "My name is TEENSY2")
+    finally:
+        log.removeHandler(counter)
+
+    assert (counter.late, counter.other) == (2, 6)
+    assert counter.summary() == "2 late frames, 6 other driver warnings"
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == [
+        "Display driver warning: TEENSY1: reply 0 matches no command",
+        "Display driver warning: TEENSY2 sent a message: My name is TEENSY2",
+    ]

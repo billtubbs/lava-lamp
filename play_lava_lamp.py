@@ -189,8 +189,8 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
 
     configure_root_logging(LOG_PATH)
     period = 1 / fps
-    late = LateFrameCounter()
-    logging.getLogger("display1593").addHandler(late)
+    warnings = DriverWarningCounter()
+    logging.getLogger("display1593").addHandler(warnings)
     # run one frame before the clock starts: with numba, the first call loads
     # (or compiles) the compiled code, which would make the first frames late
     lamp.advance()
@@ -223,19 +223,19 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
                 t_show += period
                 now = time.monotonic()
                 if now - report_start >= report_interval:
-                    report(compute, dis.show_slack, late.count, period)
+                    report(compute, dis.show_slack, warnings, period)
                     compute.clear()
                     dis.show_slack.clear()
                     report_start = now
         except KeyboardInterrupt:
             print("Stopped.")
         finally:
-            logging.getLogger("display1593").removeHandler(late)
+            logging.getLogger("display1593").removeHandler(warnings)
         elapsed = time.monotonic() - start
         summary = (
             f"{n_shown} frames in {elapsed:.1f} s "
             f"({n_shown / elapsed:.1f} fps, target {fps:g}); "
-            f"{late.count} late-frame warnings"
+            f"{warnings.summary()}"
         )
         print(summary)
         logger.info(summary)
@@ -256,22 +256,46 @@ def parse_colour(text):
     return np.array(rgb, dtype=float)
 
 
-class LateFrameCounter(logging.Handler):
-    """Counts the display driver's warnings (e.g. late frames)."""
+# Message templates of the display driver's late-frame warnings
+LATE_FRAME_MESSAGES = ("Frame shown", "Show time missed")
+
+
+class DriverWarningCounter(logging.Handler):
+    """Counts the display driver's warnings: late frames separately from
+    all others, and prints the first warning of each other kind at once.
+
+    Counting every warning as a late frame hid a fault on 2026-11-18: one
+    board's replies went out of step and logged two "Resp invalid"
+    warnings per frame for two hours, reported as 345,876 "late frames"
+    although every frame was shown on time. The log file is rate-limited
+    (display1593.logging_utils), but this handler sees every warning.
+    """
 
     def __init__(self):
         super().__init__(level=logging.WARNING)
-        self.count = 0
+        self.late = 0
+        self.other = 0
+        self._kinds = set()
 
     def emit(self, record):
-        self.count += 1
+        template = str(record.msg)
+        if template.startswith(LATE_FRAME_MESSAGES):
+            self.late += 1
+            return
+        self.other += 1
+        if template not in self._kinds:
+            self._kinds.add(template)
+            print(f"Display driver warning: {record.getMessage()}")
+
+    def summary(self):
+        return f"{self.late} late frames, {self.other} other driver warnings"
 
 
-def report(compute, show_slack, n_late, period):
+def report(compute, show_slack, warnings, period):
     c = 1000 * np.array(compute)
     msg = (
         f"compute per frame: mean {c.mean():.1f} ms, max {c.max():.1f} ms "
-        f"(of {1000 * period:.0f} ms); {n_late} late frames so far"
+        f"(of {1000 * period:.0f} ms); {warnings.summary()} so far"
     )
     if len(show_slack):
         s = 1000 * np.array(show_slack)
