@@ -66,6 +66,9 @@ COOLING = 0.75
 LOG_PATH = "play_lava_lamp.log"
 DISPLAY_SIZE = 2000.0  # LED centres are in [0, 2000] x [0, 2000]
 START_DELAY = 0.1  # s before the first frame is shown
+# Wait before reconnecting after the display fails while running (see
+# run_display). Connecting itself already retries each board.
+RECONNECT_WAIT = 10.0  # s
 
 logger = logging.getLogger("play_lava_lamp")
 
@@ -183,8 +186,28 @@ class LavaLampLeds:
         return to_led_values(self.rgb(), self.brightness, self.gamma)
 
 
-def run_display(lamp, fps, sync=False, report_interval=60.0):
-    from display1593 import Display1593
+class DisplayFailed(Exception):
+    """The display failed while running, e.g. a board stopped replying or
+    a port went away. Worth waiting and reconnecting (the original error
+    is chained as __cause__)."""
+
+
+def run_display(
+    lamp,
+    fps,
+    sync=False,
+    report_interval=60.0,
+    reconnect_wait=RECONNECT_WAIT,
+):
+    """Show the lamp on the display until Ctrl+C.
+
+    If the display fails while running (e.g. a board stops replying, as on
+    2026-11-19 after lost USB packets), the script disconnects, waits
+    `reconnect_wait` seconds and reconnects, and the simulation carries on
+    where it was, as often as needed. If connecting fails (connect()
+    already retries each board) the error is raised and the script stops.
+    Errors in the simulation itself are not caught.
+    """
     from display1593.logging_utils import configure_root_logging
 
     configure_root_logging(LOG_PATH)
@@ -195,50 +218,96 @@ def run_display(lamp, fps, sync=False, report_interval=60.0):
     # (or compiles) the compiled code, which would make the first frames late
     lamp.advance()
     lamp.led_values()
-    with Display1593(pipelined=not sync) as dis:
-        print(
-            f"Running at {fps:g} fps, {lamp.steps_per_frame:g} steps/frame "
-            f"of dt {lamp.params.dt:g} "
-            f"({'synchronous' if sync else 'pipelined'} mode). "
-            "Ctrl+C to stop."
+    print(
+        f"Running at {fps:g} fps, {lamp.steps_per_frame:g} steps/frame "
+        f"of dt {lamp.params.dt:g} "
+        f"({'synchronous' if sync else 'pipelined'} mode). "
+        "Ctrl+C to stop."
+    )
+    stats = {"shown": 0}
+    start = time.monotonic()
+    reconnects = 0
+    try:
+        while True:
+            try:
+                play(lamp, period, sync, report_interval, warnings, stats)
+                break  # stopped with Ctrl+C
+            except DisplayFailed as err:
+                msg = (
+                    f"Display failed: {err}. "
+                    f"Reconnecting in {reconnect_wait:g} s."
+                )
+                print(msg)
+                logger.warning(msg)
+                reconnects += 1
+                try:
+                    time.sleep(reconnect_wait)
+                except KeyboardInterrupt:
+                    print("Stopped.")
+                    break
+    finally:
+        logging.getLogger("display1593").removeHandler(warnings)
+        elapsed = time.monotonic() - start
+        summary = (
+            f"{stats['shown']} frames in {elapsed:.1f} s "
+            f"({stats['shown'] / elapsed:.1f} fps, target {fps:g}); "
+            f"{warnings.summary()}; {reconnects} reconnection(s)"
         )
-        dis.clear_all()
+        print(summary)
+        logger.info(summary)
+
+
+def play(lamp, period, sync, report_interval, warnings, stats):
+    """Connect to the display and show frames until Ctrl+C (returns).
+
+    Raises DisplayFailed if showing a frame fails, and the connection is
+    closed (and the display lock released) either way. Errors connecting
+    (including DisplayLockTimeout, when another program has the display)
+    are raised as they are.
+    """
+    from display1593 import Display1593
+
+    dis = Display1593(pipelined=not sync)
+    dis.connect()
+    try:
+        try:
+            dis.clear_all()
+        except Exception as err:
+            raise DisplayFailed(str(err)) from err
         dis.show_slack.clear()
         compute = []
-        n_shown = 0
-        start = report_start = time.monotonic()
-        t_show = start + START_DELAY
-        try:
-            while True:
-                t0 = time.perf_counter()
-                lamp.advance()
-                values = lamp.led_values()
-                compute.append(time.perf_counter() - t0)
+        report_start = time.monotonic()
+        t_show = report_start + START_DELAY
+        while True:
+            t0 = time.perf_counter()
+            lamp.advance()
+            values = lamp.led_values()
+            compute.append(time.perf_counter() - t0)
+            try:
                 dis.set_all_leds(values)
                 # pipelined: shows the previous frame at t_show and starts
                 # sending this one; synchronous: waits until t_show, then
                 # shows this one
                 dis.show(t_show)
-                n_shown += 1
-                t_show += period
-                now = time.monotonic()
-                if now - report_start >= report_interval:
-                    report(compute, dis.show_slack, warnings, period)
-                    compute.clear()
-                    dis.show_slack.clear()
-                    report_start = now
-        except KeyboardInterrupt:
-            print("Stopped.")
+            except Exception as err:
+                raise DisplayFailed(str(err)) from err
+            stats["shown"] += 1
+            t_show += period
+            now = time.monotonic()
+            if now - report_start >= report_interval:
+                report(compute, dis.show_slack, warnings, period)
+                compute.clear()
+                dis.show_slack.clear()
+                report_start = now
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        try:
+            dis.disconnect()
+        except Exception:
+            logger.exception("Error while disconnecting from the display")
         finally:
-            logging.getLogger("display1593").removeHandler(warnings)
-        elapsed = time.monotonic() - start
-        summary = (
-            f"{n_shown} frames in {elapsed:.1f} s "
-            f"({n_shown / elapsed:.1f} fps, target {fps:g}); "
-            f"{warnings.summary()}"
-        )
-        print(summary)
-        logger.info(summary)
+            dis._lock.release()  # safe if already released
 
 
 def parse_colour(text):
@@ -527,6 +596,13 @@ def parse_args():
         help="seconds between timing reports (default 60)",
     )
     ap.add_argument(
+        "--reconnect-wait",
+        type=float,
+        default=RECONNECT_WAIT,
+        help="seconds to wait before reconnecting if the display fails "
+        f"while running (default {RECONNECT_WAIT:g})",
+    )
+    ap.add_argument(
         "--benchmark",
         action="store_true",
         help="time the simulation and rendering, no display",
@@ -578,7 +654,9 @@ def main():
     elif args.preview:
         preview(lamp, args.preview, args.frames or 300, args.fps)
     else:
-        run_display(lamp, args.fps, args.sync, args.report_interval)
+        run_display(
+            lamp, args.fps, args.sync, args.report_interval, args.reconnect_wait
+        )
 
 
 if __name__ == "__main__":

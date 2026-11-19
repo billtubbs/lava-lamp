@@ -167,6 +167,20 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   from one board whose replies had gone one step out of step (fixed in
   display1593's `BoardSerialWorker`, see its TODO.md). The log file is
   rate-limited by display1593's `configure_root_logging`.
+- Reconnecting (2026-11-19, Bill's design): if the display fails while
+  running (`DisplayFailed`, e.g. a board stops replying after lost USB
+  packets), `run_display` disconnects, waits `--reconnect-wait` (10 s) and
+  reconnects, as often as needed; the simulation carries on. If connecting
+  fails, the error stops the script: `Display1593.connect()` already retries
+  each board, so no backoff or retry limit here. Kept in this script, not
+  display1593: each display app decides how to handle failures.
+- Lost USB packets (2026-11-19): boards reported `2332 bytes received, 2396
+  expected` (exactly one 64-byte USB packet missing), on both boards, under
+  the lava lamp's full-frame traffic (~115 KB/s); the clock's light traffic
+  is fine. No kernel USB errors, no under-voltage. Suspects: the Pi's
+  dwc_otg controller with full-speed Teensys behind a high-speed hub, or the
+  Teensy firmware's receive handling. TEENSY2 hung afterwards (needed a power
+  cycle, which also reboots the Pi).
 - Display driving follows display1593's `playback.py`: pipelined mode,
   `show(t)` at a fixed rate, late-frame warning counter, `show_slack` report.
 - Speed (933 particles, 4 steps/frame), per frame:
