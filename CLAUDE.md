@@ -174,13 +174,43 @@ editable in `.venv`; neither is on PyPI, so they're not in `pyproject.toml`).
   fails, the error stops the script: `Display1593.connect()` already retries
   each board, so no backoff or retry limit here. Kept in this script, not
   display1593: each display app decides how to handle failures.
-- Lost USB packets (2026-11-19): boards reported `2332 bytes received, 2396
-  expected` (exactly one 64-byte USB packet missing), on both boards, under
-  the lava lamp's full-frame traffic (~115 KB/s); the clock's light traffic
-  is fine. No kernel USB errors, no under-voltage. Suspects: the Pi's
-  dwc_otg controller with full-speed Teensys behind a high-speed hub, or the
-  Teensy firmware's receive handling. TEENSY2 hung afterwards (needed a power
-  cycle, which also reboots the Pi).
+- Lost USB packets (cause unknown; Bill accepts it as is, 2026-11-20).
+  Occasionally one board receives a full-display command (`LA`) with exactly
+  one 64-byte USB packet missing. The driver now logs it and recovers within
+  one frame, e.g. (2026-11-19, 5.5 h into an 8.1 h run):
+  ```
+  TEENSY2 sent a message: 2323 bytes received, 2387 expected
+  TEENSY2: reply [9, 19, 0, 0, 36, 152] matches no command waiting for a reply (the oldest expects [9, 83, 0, 0, 36, 161]); ignored
+  TEENSY2: no reply to 1 command(s) [b'LA']; skipping them to get back in step
+  ```
+  The reply's first two bytes are the length received (0x0913 = 2323) and
+  the rest the sum of the bytes received: 9 less than expected, so the lost
+  64 bytes were LED colours, mostly black (the `LA` header alone sums to
+  141). Effect: one frame (1/24 s) with TEENSY2's later LEDs shifted ~21
+  LEDs and colour channels rotated (64 isn't a multiple of 3).
+  - Rate: Nov 18 evening 1 in 6.6 h (old driver, which then went out of
+    step for 2 h); Nov 19 morning 5 in 5 min on both boards, then TEENSY2
+    hung (power cycle needed, which also reboots the Pi); Nov 19 after the
+    power cycle 1 in 8.1 h. So roughly one every 5-8 h with freshly
+    restarted boards; the morning burst looks like a board in a bad state.
+  - Only under the lava lamp's full-frame traffic (~115 KB/s, 24 fps); the
+    clock's light traffic is fine. Nothing physical changed.
+  - Ruled out or not seen: no kernel messages at all around the events
+    (`journalctl -k`, so Linux saw no USB errors or resets), no
+    under-voltage (`vcgencmd get_throttled` 0x0), no other program on the
+    ports, Pi not throttled (51.5 C).
+  - Possible causes, none confirmed: (1) the Pi Zero 2 W's `dwc_otg` USB
+    controller with full-speed Teensys behind a high-speed hub (split
+    transactions; known trouble under load, settings in
+    `/boot/firmware/cmdline.txt`, e.g. forcing the bus to full speed);
+    (2) the Teensy firmware's USB receiving dropping a packet; (3) CPU load
+    (Numba uses all 4 cores) delaying USB handling. The firmware
+    (`CommLEDTest`, `SerialComm`) may also hang on a merged oversized
+    command: its "bytes exceed buffer" check runs after decoding.
+  - Not enough information to tell which. If it ever matters: runs with
+    `--fps 12` (half the traffic) and `--threads 2` (less CPU load), the
+    dwc_otg settings, or firmware changes (treat every start marker as a new
+    command; sequence numbers and a CRC in the protocol).
 - Display driving follows display1593's `playback.py`: pipelined mode,
   `show(t)` at a fixed rate, late-frame warning counter, `show_slack` report.
 - Speed (933 particles, 4 steps/frame), per frame:
